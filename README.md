@@ -78,11 +78,22 @@ pip install -r requirements.txt
 
 ### Configurer les secrets
 
-```bash
-cp .env.example .env
+Crée un fichier `.env` à la racine du projet avec au minimum :
+
+```
+DISCORD_TOKEN=
+MINESTRATOR_API_KEY=
+MYBOX_ID=
+SERVER_ID=
+ANNOUNCE_CHANNEL_ID=
 ```
 
-Ouvre `.env` et remplis `DISCORD_TOKEN`, `MINESTRATOR_API_KEY` et `SERVER_ID`.
+Toutes les autres variables (`STATS_CHANNEL_ID`, `RESTART_INTERVAL_HOURS`,
+`RESTART_WARNING_SECONDS`, `STATUS_POLL_INTERVAL_SECONDS`,
+`STATS_UPDATE_INTERVAL_SECONDS`, `ADMIN_ROLE_NAME`, `MINESTRATOR_API_BASE_URL`)
+sont optionnelles — voir leur description dans `main.py` (section
+Configuration) si tu veux les personnaliser.
+
 Ce fichier `.env` est ignoré par Git (voir `.gitignore`) — il ne sera jamais
 envoyé sur GitHub.
 
@@ -114,8 +125,9 @@ Render et Koyeb fonctionnent sur le même principe.
 2. Va sur https://railway.app et connecte-toi avec ton compte GitHub.
 3. **New Project > Deploy from GitHub repo** > sélectionne
    `Awakening-Bots-Minecraft-`.
-4. Railway détecte un projet Python. Dans les **Settings** du service, définis
-   la commande de démarrage : `python main.py`.
+4. Railway détecte un projet Python (via `requirements.txt`) et lit la
+   commande de démarrage directement dans le [`Procfile`](./Procfile) inclus
+   (`worker: python main.py`) — rien à configurer manuellement.
 5. Dans l'onglet **Variables**, ajoute tes variables d'environnement (les
    mêmes que dans `.env`) :
    - `DISCORD_TOKEN`
