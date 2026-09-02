@@ -137,6 +137,16 @@ class MinestratorClient:
         return {
             "Authorization": f"Bearer {self._api_key}",
             "Accept": "application/json",
+            # L'API Minestrator refuse les requêtes qui modifient l'état (PUT
+            # /poweraction, etc.) avec un 403 API_FORBIDDEN quand l'en-tête
+            # Origin/Referer ne pointe pas vers minestrator.com — alors que la
+            # lecture (GET /live) passe sans. C'est une protection anti-CSRF
+            # appliquée à tort aux appels authentifiés par clé API : Origin est
+            # un mécanisme navigateur, sans objet pour une auth par token Bearer.
+            # Testé le 2026-09-02 : sans cet en-tête → 403, avec → 200.
+            # À retirer si Minestrator corrige ce comportement côté serveur
+            # (le garder resterait inoffensif, l'en-tête serait simplement ignoré).
+            "Origin": "https://minestrator.com",
         }
 
     async def _request(self, method: str, path: str, json_body: dict | None = None) -> dict:
