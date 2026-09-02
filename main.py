@@ -175,6 +175,19 @@ class MinestratorClient:
 
 minestrator = MinestratorClient(MINESTRATOR_API_KEY, MINESTRATOR_API_BASE_URL)
 
+# Diagnostic au démarrage : n'affiche jamais le secret en entier, juste de quoi
+# vérifier dans les logs (Railway, etc.) que les bonnes valeurs sont chargées
+# sans avoir à comparer des captures d'écran à la main.
+logger.info(
+    "Config chargée : SERVER_ID=%s, MINESTRATOR_API_KEY=%s… (%d caractères), "
+    "ANNOUNCE_CHANNEL_ID=%s, STATS_CHANNEL_ID=%s",
+    SERVER_ID,
+    MINESTRATOR_API_KEY[:4],
+    len(MINESTRATOR_API_KEY),
+    ANNOUNCE_CHANNEL_ID,
+    STATS_CHANNEL_ID,
+)
+
 STATE_EMOJIS = {
     "online": "🟢",
     "starting": "🟡",
