@@ -6,41 +6,38 @@ au panel d'administration.
 
 ## Commandes
 
-- `/start` — démarre le serveur via l'API Minestrator (POST).
-- `/status` — affiche l'état actuel du serveur : en ligne / hors ligne / en démarrage (GET).
+- `/start` — démarre le serveur via l'API Minestrator (`PATCH /mybox/{id_mybox}/server/enable`).
+- `/stop` — arrête le serveur, réservé aux admins (`PATCH .../server/disable`).
+- `/status` — affiche l'état actuel du serveur et les joueurs connectés (`GET /server/{id_server}/live`).
 
-## 1. Récupérer ta clé API et ton ID de serveur sur Minestrator
+Le bot fait aussi tourner deux tâches de fond (voir section "Redémarrage
+automatique" plus bas) : un redémarrage périodique toutes les 4h, et une
+alerte dans le salon Discord si le serveur tombe hors ligne de façon
+inattendue.
 
-⚠️ Minestrator ne publie pas de documentation API publique stable — les étapes
-ci-dessous sont les plus probables mais peuvent varier légèrement selon les
-mises à jour du panel. Si tu ne trouves pas ces options, ouvre un ticket au
-support Minestrator en demandant explicitement : "accès API pour piloter mon
-serveur par une application externe".
+La documentation officielle de l'API (spec OpenAPI) est incluse dans ce dépôt :
+[`minestrator-api-fr.yaml`](./minestrator-api-fr.yaml). C'est la source de
+vérité si Minestrator fait évoluer son API — `main.py` s'appuie exactement
+dessus (endpoints, headers, schémas de réponse/erreur).
 
-1. Connecte-toi à ton panel Minestrator (https://panel.minestrator.com ou l'URL
-   fournie par ton offre).
-2. Repère ton **ID de serveur** : il apparaît généralement dans l'URL de la page
-   de gestion de ton serveur (ex: `.../server/<SERVER_ID>/...`) ou dans les
-   informations générales du serveur.
-3. Cherche une section **"API"**, **"Développeur"** ou **"Intégrations"** dans
-   les paramètres de ton compte ou du serveur. C'est là que tu génères une clé
-   API (parfois appelée "token API" ou "clé personnelle").
-4. **Copie cette clé immédiatement** (elle n'est souvent affichée qu'une fois)
-   et garde-la secrète — elle donne un accès équivalent à ton mot de passe pour
-   les actions autorisées.
-5. **Important (offre gratuite)** : vérifie que ton offre gratuite inclut bien
-   l'accès à l'API. Certains hébergeurs réservent cette fonctionnalité aux
-   offres payantes. Si l'option "API" n'apparaît pas dans ton panel, contacte
-   le support pour confirmer.
-6. Une fois la clé et l'ID en main, vérifie aussi le **chemin exact des
-   endpoints** (démarrer un serveur, lire son statut) et le **header
-   d'authentification attendu** (`Authorization: Bearer ...`, `X-Api-Key`,
-   etc.) — au besoin en inspectant les requêtes réseau du panel (F12 >
-   Réseau > clique sur "Démarrer" dans l'interface) ou en demandant au support.
-   Le fichier `main.py` regroupe ces valeurs en haut de fichier
-   (`MINESTRATOR_API_BASE_URL`, `START_ENDPOINT`, `STATUS_ENDPOINT`,
-   `_headers()`) pour que tu puisses les ajuster facilement sans toucher au
-   reste du code.
+## 1. Récupérer ta clé API, ton ID de MyBox et ton ID de serveur sur Minestrator
+
+1. Connecte-toi sur https://minestrator.com puis va dans
+   **Compte → Clés API** (directement : https://minestrator.com/my/account?section=api).
+2. Génère une clé API et **copie-la immédiatement** — elle est affichée **déjà
+   encodée** : colle-la telle quelle dans `.env`, ne la ré-encode pas. Garde-la
+   secrète, elle donne un accès équivalent à ton mot de passe pour les actions
+   autorisées.
+3. **Important (offre gratuite)** : l'API Minestrator précise qu'elle est
+   "accessible à tous les clients Minestrator.com", donc a priori disponible
+   même sur l'offre gratuite. Un usage abusif (polling trop fréquent, etc.)
+   peut cependant faire désactiver l'accès API — reste dans les intervalles
+   par défaut du bot (`RESTART_INTERVAL_HOURS`, `STATUS_POLL_INTERVAL_SECONDS`)
+   sauf besoin réel.
+4. Récupère ton **`MYBOX_ID`** : dans le panel, sur la page de ta MyBox, l'ID
+   apparaît dans l'URL (ex: `.../mybox/12345/...`).
+5. Récupère ton **`SERVER_ID`** : sur la page de ton serveur Minecraft dans
+   cette MyBox, l'ID apparaît dans l'URL (ex: `.../server/67890/...`).
 
 ## 2. Installer et tester le bot en local
 
@@ -127,7 +124,31 @@ Render et Koyeb fonctionnent sur le même principe.
 - **Koyeb** : créer un service depuis le repo GitHub, type "Worker", même
   configuration de variables d'environnement.
 
-## 4. Dépôt Git et GitHub
+## 4. Redémarrage automatique périodique
+
+Le serveur redémarre automatiquement toutes les `RESTART_INTERVAL_HOURS`
+heures (4h par défaut), même si des joueurs sont connectés :
+
+1. Le bot vérifie combien de joueurs sont actuellement connectés.
+2. Il envoie un message dans le salon `ANNOUNCE_CHANNEL_ID` annonçant le
+   redémarrage dans `RESTART_WARNING_SECONDS` secondes (30s par défaut), avec
+   la liste des joueurs connectés.
+3. Il lance le redémarrage (`poweraction: restart10`, qui diffuse aussi un
+   compte à rebours de 10s dans la console/le jeu).
+4. Il surveille le retour en ligne du serveur ; si celui-ci ne redémarre pas
+   tout seul, un message invite les joueurs à retaper `/start`.
+
+En complément, une veille indépendante vérifie le statut toutes les
+`STATUS_POLL_INTERVAL_SECONDS` secondes (2 min par défaut) : si le serveur
+passe hors ligne en dehors de ce cycle (crash, arrêt manuel, etc.), un message
+est envoyé dans le salon pour inviter les joueurs à retaper `/start`.
+
+Ces deux tâches ne démarrent que si `ANNOUNCE_CHANNEL_ID` est renseigné dans
+`.env` — récupère l'ID du salon en activant le mode développeur Discord
+(Réglages utilisateur > Avancés > Mode développeur), puis clic droit sur le
+salon > "Copier l'identifiant".
+
+## 5. Dépôt Git et GitHub
 
 Le dépôt local a été initialisé et lié au dépôt distant
 `https://github.com/Matt0967/Awakening-Bots-Minecraft-.git`. Les secrets
@@ -149,6 +170,8 @@ d'aucun accès aux salons vocaux, à la modération, ou à la gestion du serveur
 Discord. Toute la logique de démarrage/arrêt passe par l'API Minestrator, pas
 par Discord.
 
-Si tu utilises `ALLOWED_ROLE_NAME` pour restreindre l'usage à un rôle
-spécifique, aucune permission Discord supplémentaire n'est requise : la
-vérification se fait directement dans le code du bot.
+Si tu utilises `ALLOWED_ROLE_NAME` (pour `/start`) ou `ADMIN_ROLE_NAME` (pour
+`/stop`) pour restreindre l'usage à un rôle spécifique, aucune permission
+Discord supplémentaire n'est requise : la vérification se fait directement
+dans le code du bot. Par défaut (sans `ADMIN_ROLE_NAME`), `/stop` est réservé
+aux membres ayant la permission Discord native **"Gérer le serveur"**.

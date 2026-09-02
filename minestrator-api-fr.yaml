@@ -1,0 +1,3380 @@
+openapi: 3.1.0
+info:
+  title: MineStrator API
+  version: 1.0.0
+  summary: API REST officielle de MineStrator.com
+  termsOfService: https://minestrator.com/conditions/general/vente
+  x-overview: |
+    Contexte MineStrator (pour assistants IA, non affiché dans la doc HTML) :
+
+    MineStrator est un hébergeur de serveurs — principalement des serveurs de jeu
+    (Minecraft, etc.), mais aussi d'autres services : bases de données, outils (Grafana,
+    Prometheus…) ou runtimes (Node.js, Python, Ruby…). Un client souscrit à une MyBox
+    (une offre avec un quota de ressources : CPU, RAM, disque, bases de données) et y crée
+    un ou plusieurs serveurs qui se partagent ces ressources.
+
+    - Utilisateur : le compte client ; il possède des MyBox et des serveurs (ou y accède
+      en sous-utilisateur avec des permissions déléguées).
+    - MyBox : l'offre d'un client, un pool de ressources (CPU / RAM / disque / bases de
+      données). Une MyBox contient un ou plusieurs serveurs.
+    - Serveur : une instance hébergée dans une MyBox — un serveur de jeu le plus souvent,
+      mais aussi une base de données, un outil ou un runtime — avec sa part de ressources
+      allouée.
+
+    Cette API permet de piloter ses serveurs (état, alimentation, commandes, réglages)
+    et de consulter son compte et ses MyBox.
+  description: |
+    ## Authentification
+
+    Chaque requête doit inclure votre clé API dans le header `Authorization` :
+
+    ```
+    Authorization: Bearer VOTRE_CLÉ
+    ```
+
+    Récupérez votre clé dans votre panel : [Compte → Clés API](https://minestrator.com/my/account?section=api).
+    Elle y est affichée **déjà encodée** : collez-la telle quelle, ne la ré-encodez pas.
+
+    ## Conditions d'utilisation
+
+    L'API est accessible à tous les clients MineStrator.com.
+    L'utilisation depuis une application externe doit être contrôlée, raisonnable
+    et dans le cadre d'un usage standard des services MineStrator.com.
+    En cas d'abus, l'accès API peut être désactivé et le compte associé suspendu.
+
+    L'usage de l'API est soumis aux [conditions générales d'utilisation de MineStrator](https://minestrator.com/conditions/general/vente).
+  contact:
+    name: MineStrator
+    url: https://minestrator.com
+servers:
+  - url: https://mine.sttr.io
+    description: Production
+security:
+  - BearerAuth: []
+tags:
+  - name: User
+    description: Compte et données utilisateur
+  - name: Server
+    description: Gestion et pilotage des serveurs
+  - name: MyBox
+    description: Offres MyBox et serveurs associés
+  - name: Snapshots
+    description: Snapshots de serveurs (sauvegardes complètes)
+paths:
+  /user:
+    get:
+      tags:
+        - User
+      summary: Récupérer son profil
+      description: |
+        Récupère les informations de **votre propre compte** : profil, solde de crédits
+        et comptes de jeu liés.
+
+        **Accès** : authentification requise. L'endpoint renvoie toujours le compte
+        associé à votre clé API.
+      operationId: getUser
+      responses:
+        '200':
+          description: Données utilisateur récupérées avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: User - Informations - Get user datas
+                      endpoint:
+                        type: string
+                        example: /user
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        $ref: '#/components/schemas/UserData'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /user/{id_user}/servers:
+    get:
+      tags:
+        - User
+      summary: Lister ses MyBox et serveurs
+      description: |
+        Récupère **vos propres serveurs** : les MyBox auxquelles vous avez accès
+        (`servers_groups`, indexées par ID) et la liste à plat de vos serveurs (`servers`),
+        possédés ou accessibles en sous-utilisateur.
+
+        **Accès** : authentification requise. Vous ne pouvez lister que vos propres serveurs
+        (`id_user` doit correspondre à votre compte).
+      operationId: getUserServers
+      parameters:
+        - name: id_user
+          in: path
+          required: true
+          description: Votre ID utilisateur.
+          schema:
+            type: integer
+            example: 12345
+      responses:
+        '200':
+          description: Serveurs de l'utilisateur récupérés avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: User - Servers - Get user servers
+                      endpoint:
+                        type: string
+                        example: /user/12345/servers
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        $ref: '#/components/schemas/UserServersData'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /mybox/{id_mybox}:
+    get:
+      tags:
+        - MyBox
+      summary: Récupérer les informations d'une MyBox
+      description: |
+        Récupère les informations d'une MyBox : état, offre et ressources, et la liste de
+        ses serveurs.
+
+        **Accès** : propriétaire de la MyBox, ou sous-utilisateur avec la permission `view`.
+      operationId: getMyBox
+      parameters:
+        - name: id_mybox
+          in: path
+          required: true
+          description: ID de la MyBox.
+          schema:
+            type: integer
+            example: 12345
+      responses:
+        '200':
+          description: Données de la MyBox récupérées avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: MyBox - Actions - Get datas
+                      endpoint:
+                        type: string
+                        example: /mybox/12345
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        $ref: '#/components/schemas/MyBoxData'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /mybox/{id_mybox}/server:
+    post:
+      tags:
+        - MyBox
+      summary: Créer un serveur
+      description: |
+        Crée un nouveau serveur dans une MyBox et lance son installation. Le serveur
+        partage les ressources (CPU / RAM / disque) de la MyBox.
+
+        Indiquez le type de serveur via `id_egg` **ou** `id_egg_experimental` (l'un des
+        deux est requis). Sur une MyBox encore vide, si `cpu` et `ram` sont omis, toutes
+        les ressources de l'offre sont allouées au serveur — sauf si `force_settings`
+        est défini.
+
+        Les `id` valides se récupèrent via `GET /server/catalog/locations` (champ
+        `location`) et `GET /server/catalog/eggs` (champ `id_egg`).
+
+        **Accès** : propriétaire de la MyBox, ou sous-utilisateur avec la permission
+        `server_create`.
+      operationId: createMyBoxServer
+      parameters:
+        - name: id_mybox
+          in: path
+          required: true
+          description: ID de la MyBox.
+          schema:
+            type: integer
+            example: 12345
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - location
+              properties:
+                location:
+                  type: integer
+                  description: ID de la localisation (datacenter) où héberger le serveur.
+                  example: 1
+                id_egg:
+                  type: integer
+                  description: ID du type de serveur (egg). Requis si `id_egg_experimental` est absent.
+                  example: 1
+                id_egg_experimental:
+                  type: integer
+                  description: ID d'un egg expérimental. Requis si `id_egg` est absent.
+                  example: 0
+                cpu:
+                  type: integer
+                  description: Cœurs CPU à allouer. Optionnel pour le premier serveur d'une MyBox vide.
+                  example: 2
+                ram:
+                  type: integer
+                  description: RAM à allouer, en Go. Optionnel pour le premier serveur d'une MyBox vide.
+                  example: 4
+                name:
+                  type: string
+                  maxLength: 100
+                  description: Nom du serveur.
+                  example: Mon serveur Survie
+                required_fields:
+                  type: array
+                  description: Valeurs des champs requis par l'egg choisi.
+                  items:
+                    type: object
+                    properties:
+                      key:
+                        type: string
+                        example: SERVER_VERSION
+                      value:
+                        type: string
+                        example: '1.21'
+                force_settings:
+                  type: integer
+                  description: Empêche l'allocation automatique de toute l'offre au premier serveur.
+                  example: 0
+      responses:
+        '200':
+          description: Serveur créé avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: MyBox - Server - Create a server
+                      endpoint:
+                        type: string
+                        example: /mybox/12345/server
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          id_mybox:
+                            type: integer
+                            description: ID de la MyBox.
+                            example: 12345
+                          id_server:
+                            type: integer
+                            description: ID du serveur créé.
+                            example: 67890
+                          ip:
+                            type: string
+                            description: Adresse de connexion du serveur (IP:port).
+                            example: 51.83.42.10:25565
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    patch:
+      tags:
+        - MyBox
+      summary: Modifier les ressources d'un serveur
+      description: |
+        Modifie le CPU et la RAM alloués à un serveur, dans la limite des ressources de
+        l'offre de la MyBox.
+
+        Le serveur doit être **éteint** pour être redimensionné.
+
+        **Accès** : propriétaire de la MyBox, ou sous-utilisateur avec la permission
+        `server_update`.
+      operationId: updateMyBoxServerResources
+      parameters:
+        - name: id_mybox
+          in: path
+          required: true
+          description: ID de la MyBox.
+          schema:
+            type: integer
+            example: 12345
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id_server
+                - cpu
+                - ram
+              properties:
+                id_server:
+                  type: integer
+                  description: ID du serveur à modifier.
+                  example: 67890
+                cpu:
+                  type: integer
+                  description: Cœurs CPU à allouer.
+                  example: 2
+                ram:
+                  type: integer
+                  description: RAM à allouer, en Go.
+                  example: 4
+      responses:
+        '200':
+          description: Ressources du serveur modifiées avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: MyBox - Server - Edit server resources
+                      endpoint:
+                        type: string
+                        example: /mybox/12345/server
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /mybox/{id_mybox}/server/{id_server}:
+    delete:
+      tags:
+        - MyBox
+      summary: Supprimer un serveur
+      description: |
+        Supprime définitivement un serveur de la MyBox. Cette action est
+        **irréversible** : le serveur et ses données sont détruits, et ses ressources
+        sont libérées dans la MyBox.
+
+        **Accès** : propriétaire de la MyBox, ou sous-utilisateur avec la permission
+        `server_delete`.
+      operationId: deleteMyBoxServer
+      parameters:
+        - name: id_mybox
+          in: path
+          required: true
+          description: ID de la MyBox.
+          schema:
+            type: integer
+            example: 12345
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur à supprimer.
+          schema:
+            type: integer
+            example: 67890
+      responses:
+        '200':
+          description: Serveur supprimé avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: MyBox - Server - Delete a server
+                      endpoint:
+                        type: string
+                        example: /mybox/12345/server/67890
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /mybox/{id_mybox}/server/enable:
+    patch:
+      tags:
+        - MyBox
+      summary: Activer un serveur
+      description: |
+        Réactive un serveur précédemment désactivé. Le serveur reprend sa part de
+        ressources dans la MyBox — l'offre doit donc avoir assez de CPU / RAM
+        disponibles.
+
+        **Accès** : propriétaire de la MyBox, ou sous-utilisateur avec la permission
+        `server_status`.
+      operationId: enableMyBoxServer
+      parameters:
+        - name: id_mybox
+          in: path
+          required: true
+          description: ID de la MyBox.
+          schema:
+            type: integer
+            example: 12345
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id_server
+              properties:
+                id_server:
+                  type: integer
+                  description: ID du serveur à activer.
+                  example: 67890
+      responses:
+        '200':
+          description: Serveur activé avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: MyBox - Server - Enable a server
+                      endpoint:
+                        type: string
+                        example: /mybox/12345/server/enable
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /mybox/{id_mybox}/server/disable:
+    patch:
+      tags:
+        - MyBox
+      summary: Désactiver un serveur
+      description: |
+        Désactive un serveur sans le supprimer : il est suspendu et libère sa part de
+        ressources dans la MyBox, qui redeviennent disponibles pour les autres serveurs.
+        Réactivable à tout moment.
+
+        **Accès** : propriétaire de la MyBox, ou sous-utilisateur avec la permission
+        `server_status`.
+      operationId: disableMyBoxServer
+      parameters:
+        - name: id_mybox
+          in: path
+          required: true
+          description: ID de la MyBox.
+          schema:
+            type: integer
+            example: 12345
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id_server
+              properties:
+                id_server:
+                  type: integer
+                  description: ID du serveur à désactiver.
+                  example: 67890
+      responses:
+        '200':
+          description: Serveur désactivé avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: MyBox - Server - Disable a server
+                      endpoint:
+                        type: string
+                        example: /mybox/12345/server/disable
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/catalog/locations:
+    get:
+      tags:
+        - Server
+      summary: Lister les localisations disponibles
+      description: |
+        Liste les localisations où un serveur peut être créé. Utilisez
+        l'`id` retourné comme champ `location` lors de la création d'un serveur.
+
+        **Accès** : tout client authentifié.
+      operationId: getServerCatalogLocations
+      responses:
+        '200':
+          description: Localisations récupérées avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Catalog - Available locations
+                      endpoint:
+                        type: string
+                        example: /server/catalog/locations
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          locations:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: integer
+                                  description: Identifiant de la localisation (à passer en `location`).
+                                  example: 1
+                                city:
+                                  type: string
+                                  description: Ville du datacenter.
+                                  example: Toulouse
+                                country:
+                                  type: string
+                                  description: Pays.
+                                  example: France
+                                country_iso:
+                                  type: string
+                                  description: Code pays ISO 3166-1 alpha-2.
+                                  example: FR
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/catalog/eggs:
+    get:
+      tags:
+        - Server
+      summary: Lister les types de serveur (eggs) disponibles
+      description: |
+        Liste les types de serveur disponibles à la création (jeux, bases de données,
+        outils, runtimes…). Utilisez l'`id` retourné comme champ `id_egg` lors de la
+        création.
+
+        `required_fields` indique les champs que l'egg impose : reportez chaque `key`
+        dans le tableau `required_fields` du corps de création.
+
+        **Accès** : tout client authentifié.
+      operationId: getServerCatalogEggs
+      responses:
+        '200':
+          description: Types de serveur récupérés avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Catalog - Available eggs
+                      endpoint:
+                        type: string
+                        example: /server/catalog/eggs
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          eggs:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: integer
+                                  description: Identifiant du type de serveur (à passer en `id_egg`).
+                                  example: 1
+                                name:
+                                  type: string
+                                  description: Nom du type de serveur.
+                                  example: Minecraft
+                                required_fields:
+                                  type: array
+                                  description: Champs imposés par l'egg, à fournir dans `required_fields` à la création.
+                                  items:
+                                    type: object
+                                    properties:
+                                      key:
+                                        type: string
+                                        example: STEAM_USER
+                                      label:
+                                        type: string
+                                        example: '[Host] Steam Username'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}:
+    get:
+      tags:
+        - Server
+      summary: Récupérer les informations d'un serveur
+      description: |
+        Récupère les informations complètes d'un serveur.
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `view`.
+        Certains blocs de la réponse nécessitent une permission supplémentaire :
+        `ports` (`ports_view`), `sftp` (`sftp`), `livemap` (`livemap`) — sans elle, le bloc
+        est absent.
+      operationId: getServerDatas
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      responses:
+        '200':
+          description: Données du serveur récupérées avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Actions - Get datas
+                      endpoint:
+                        type: string
+                        example: /server/67890
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        $ref: '#/components/schemas/ServerFullData'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/live:
+    get:
+      tags:
+        - Server
+      summary: Récupérer les statistiques temps réel d'un serveur
+      description: |
+        Renvoie l'état et les statistiques temps réel d'un serveur. Pour un serveur en
+        ligne, les joueurs connectés et les informations du jeu sont aussi renvoyés **si le
+        jeu est supporté** (certains jeux ne permettent pas de récupérer ces données).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `view`.
+      operationId: getServerLiveData
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      responses:
+        '200':
+          description: Statistiques temps réel récupérées avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Actions - Get live datas
+                      endpoint:
+                        type: string
+                        example: /server/67890/live
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        $ref: '#/components/schemas/ServerLiveData'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/live/light:
+    get:
+      tags:
+        - Server
+      summary: Récupérer les données live complémentaires (version allégée)
+      description: |
+        Version allégée de `GET /server/{id_server}/live`, pensée pour accompagner la
+        connexion websocket. Les informations de jeu (joueurs connectés, version…) ne
+        sont disponibles que **si le jeu est supporté** (certains jeux ne permettent pas
+        de récupérer ces données).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `view`.
+      operationId: getServerLiveLight
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      responses:
+        '200':
+          description: Données live allégées récupérées avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Actions - Get live datas (light)
+                      endpoint:
+                        type: string
+                        example: /server/67890/live/light
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          status:
+                            type:
+                              - string
+                              - 'null'
+                            description: Statut côté infrastructure (ex. `installing`) ; `null` si aucun état particulier
+                            example: null
+                          cpu:
+                            type: object
+                            description: Limites CPU (en centièmes de cœur — 100 = 1 cœur). L'usage instantané vient du websocket.
+                            properties:
+                              dedicated:
+                                type: integer
+                                description: CPU dédié au serveur
+                                example: 200
+                              flexcore:
+                                type: integer
+                                description: CPU partagé additionnel (FlexCore) fourni par l'offre
+                                example: 100
+                              limit:
+                                type: integer
+                                description: CPU total disponible (dédié + FlexCore)
+                                example: 300
+                          disk:
+                            type: object
+                            description: Limite de disque (Mo)
+                            properties:
+                              limit:
+                                type: integer
+                                description: Limite de disque (Mo)
+                                example: 10000
+                          memory:
+                            type: object
+                            description: Limite de mémoire (Mo)
+                            properties:
+                              limit:
+                                type: integer
+                                description: Limite de mémoire (Mo)
+                                example: 8000
+                          players:
+                            type: object
+                            description: Joueurs connectés (présent uniquement si le serveur est interrogeable et renvoie des joueurs)
+                            properties:
+                              current:
+                                type: integer
+                                description: Nombre de joueurs connectés
+                                example: 12
+                              limit:
+                                type: integer
+                                description: Nombre maximum de slots
+                                example: 100
+                              list:
+                                type: array
+                                description: Liste des noms de joueurs connectés (plafonnée à 300)
+                                items:
+                                  type: string
+                                example:
+                                  - Notch
+                                  - jeb_
+                          version:
+                            type: string
+                            description: Version du serveur (présent si interrogeable, selon le jeu)
+                            example: 1.21.1
+                          motd:
+                            type: string
+                            description: Message du jour, débarrassé des codes couleur (présent si interrogeable, selon le jeu)
+                            example: Bienvenue sur le serveur !
+                          hostname:
+                            type: string
+                            description: Hostname annoncé par le serveur (présent si interrogeable, selon le jeu)
+                            example: play.example.com
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/console/logs:
+    get:
+      tags:
+        - Server
+      summary: Récupérer les logs de la console
+      description: |
+        Renvoie les **100 dernières lignes** de la console du serveur, avec leurs **codes couleur ANSI** bruts.
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `view`.
+      operationId: getServerConsoleLogs
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur.
+          schema:
+            type: integer
+            example: 67890
+      responses:
+        '200':
+          description: Logs récupérés avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Console - Get recent console logs
+                      endpoint:
+                        type: string
+                        example: /server/67890/console/logs
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          logs:
+                            type: array
+                            description: Les 100 dernières lignes de la console (codes couleur ANSI conservés).
+                            items:
+                              type: string
+                            example:
+                              - '[12:00:03 INFO]: Done (5.123s)! For help, type "help"'
+                              - '[12:00:14 INFO]: Steve a rejoint la partie'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/poweraction:
+    put:
+      tags:
+        - Server
+      summary: Envoyer une action d'alimentation
+      description: |
+        Démarre, redémarre, arrête ou force l'arrêt d'un serveur. Les variantes
+        `restart10` / `stop10` diffusent un compte à rebours de 10 secondes avant d'agir
+        (la requête reste alors bloquée ~10 s).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission
+        correspondant à l'action (`poweraction_start`, `poweraction_restart`,
+        `poweraction_stop`, `poweraction_kill`).
+      operationId: sendServerPowerAction
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - poweraction
+              properties:
+                poweraction:
+                  type: string
+                  enum:
+                    - start
+                    - restart
+                    - restart10
+                    - stop
+                    - stop10
+                    - kill
+                  description: |
+                    Action à exécuter :
+                    - `start` : démarrer le serveur
+                    - `restart` : redémarrer immédiatement
+                    - `restart10` : redémarrer avec un compte à rebours de 10 s dans la console
+                    - `stop` : arrêter immédiatement
+                    - `stop10` : arrêter avec un compte à rebours de 10 s dans la console
+                    - `kill` : forcer l'arrêt du processus
+                  example: start
+      responses:
+        '200':
+          description: Action transmise avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Actions - Send power action
+                      endpoint:
+                        type: string
+                        example: /server/67890/poweraction
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/command:
+    put:
+      tags:
+        - Server
+      summary: Envoyer une commande au serveur
+      description: |
+        Transmet une commande au serveur.
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission
+        `command`.
+
+        La commande n'est exécutée que si le serveur est en ligne. Sur un serveur
+        arrêté, l'API répond tout de même `200` mais la commande est ignorée.
+      operationId: sendServerCommand
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - command
+              properties:
+                command:
+                  type: string
+                  description: Commande à envoyer au serveur
+                  example: say Bonjour à tous !
+      responses:
+        '200':
+          description: Commande transmise avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Actions - Send command
+                      endpoint:
+                        type: string
+                        example: /server/67890/command
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/command/minecraft/kick:
+    put:
+      tags:
+        - Server
+      summary: Expulser (kick) un joueur
+      description: |
+        Expulse un joueur du serveur (serveurs Minecraft ; sans effet si le serveur est
+        hors ligne).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `players_kick`.
+      operationId: kickServerPlayer
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - player
+              properties:
+                player:
+                  type: string
+                  description: Nom du joueur
+                  example: Notch
+      responses:
+        '200':
+          description: Commande transmise avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/command/minecraft/ban:
+    put:
+      tags:
+        - Server
+      summary: Bannir un joueur
+      description: |
+        Bannit un joueur du serveur (serveurs Minecraft ; sans effet si le serveur est
+        hors ligne).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `players_ban`.
+      operationId: banServerPlayer
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - player
+              properties:
+                player:
+                  type: string
+                  description: Nom du joueur
+                  example: Notch
+      responses:
+        '200':
+          description: Commande transmise avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/command/minecraft/unban:
+    put:
+      tags:
+        - Server
+      summary: Débannir un joueur
+      description: |
+        Lève le bannissement d'un joueur (serveurs Minecraft ; sans effet si le serveur
+        est hors ligne).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `players_ban`.
+      operationId: unbanServerPlayer
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - player
+              properties:
+                player:
+                  type: string
+                  description: Nom du joueur
+                  example: Notch
+      responses:
+        '200':
+          description: Commande transmise avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/command/minecraft/op/add:
+    put:
+      tags:
+        - Server
+      summary: Promouvoir un joueur opérateur (op)
+      description: |
+        Donne le statut opérateur à un joueur (serveurs Minecraft ; sans effet si le
+        serveur est hors ligne).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `players_operator`.
+      operationId: addServerOperator
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - player
+              properties:
+                player:
+                  type: string
+                  description: Nom du joueur
+                  example: Notch
+      responses:
+        '200':
+          description: Commande transmise avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/command/minecraft/op/remove:
+    put:
+      tags:
+        - Server
+      summary: Retirer le statut opérateur (deop)
+      description: |
+        Retire le statut opérateur d'un joueur (serveurs Minecraft ; sans effet si le
+        serveur est hors ligne).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `players_operator`.
+      operationId: removeServerOperator
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - player
+              properties:
+                player:
+                  type: string
+                  description: Nom du joueur
+                  example: Notch
+      responses:
+        '200':
+          description: Commande transmise avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/command/minecraft/whitelist/add:
+    put:
+      tags:
+        - Server
+      summary: Ajouter un joueur à la whitelist
+      description: |
+        Ajoute un joueur à la whitelist du serveur (serveurs Minecraft ; sans effet si
+        le serveur est hors ligne).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `players_whitelist`.
+      operationId: addServerWhitelistPlayer
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - player
+              properties:
+                player:
+                  type: string
+                  description: Nom du joueur
+                  example: Notch
+      responses:
+        '200':
+          description: Commande transmise avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/command/minecraft/whitelist/remove:
+    put:
+      tags:
+        - Server
+      summary: Retirer un joueur de la whitelist
+      description: |
+        Retire un joueur de la whitelist du serveur (serveurs Minecraft ; sans effet si
+        le serveur est hors ligne).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `players_whitelist`.
+      operationId: removeServerWhitelistPlayer
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - player
+              properties:
+                player:
+                  type: string
+                  description: Nom du joueur
+                  example: Notch
+      responses:
+        '200':
+          description: Commande transmise avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/name:
+    patch:
+      tags:
+        - Server
+      summary: Renommer un serveur
+      description: |
+        Modifie le nom affiché du serveur. Le changement est
+        appliqué **immédiatement**, sans redémarrage.
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission
+        `server_name`.
+      operationId: updateServerName
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  maxLength: 100
+                  description: Nouveau nom du serveur.
+                  example: Mon serveur Survie
+      responses:
+        '200':
+          description: Nom du serveur modifié avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Settings - Edit server name
+                      endpoint:
+                        type: string
+                        example: /server/67890/name
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/properties:
+    get:
+      tags:
+        - Server
+      summary: Lire les paramètres d'un serveur (server.properties)
+      description: |
+        Renvoie les paramètres de configuration du serveur.
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `settings_view`.
+      operationId: getServerProperties
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      responses:
+        '200':
+          description: Paramètres du serveur récupérés avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Settings - Get server settings (server.properties)
+                      endpoint:
+                        type: string
+                        example: /server/67890/properties
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          properties_type:
+                            type: string
+                            description: Type de paramètres renvoyés
+                            example: server_properties
+                          properties:
+                            type: object
+                            description: Dictionnaire des paramètres du serveur (`clé → valeur`).
+                            additionalProperties: true
+              examples:
+                server_properties:
+                  summary: Exemple de réponse
+                  value:
+                    api:
+                      description: Server - Settings - Get server settings (server.properties)
+                      endpoint: /server/67890/properties
+                      code: 200
+                      data:
+                        properties_type: server_properties
+                        properties:
+                          max-players: '20'
+                          difficulty: easy
+                          pvp: 'true'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags:
+        - Server
+      summary: Modifier un paramètre d'un serveur (server.properties)
+      description: |
+        Modifie **un seul** paramètre du serveur ; le paramètre doit déjà exister.
+        Appliqué au prochain démarrage.
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission
+        `settings_edit`. Deux familles de paramètres exigent une permission supplémentaire :
+        `enable-rcon`/`rcon.*` → `command` ; `op-permission-level` → `players_operator`.
+      operationId: editServerProperties
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - property
+              properties:
+                property:
+                  type: string
+                  description: Nom du paramètre à modifier (clé de `server.properties`).
+                  example: max-players
+                value:
+                  type: string
+                  description: Nouvelle valeur du paramètre. Une valeur vide est acceptée (vide le paramètre).
+                  example: '30'
+      responses:
+        '200':
+          description: Paramètre modifié avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Settings - Edit server settings (server.properties)
+                      endpoint:
+                        type: string
+                        example: /server/67890/properties
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/poweraction/messages:
+    patch:
+      tags:
+        - Server
+      summary: Modifier les messages des actions d'alimentation
+      description: |
+        Définit les messages diffusés dans la console pendant le compte à rebours de
+        10 secondes des actions `restart10` et `stop10`. Le marqueur `$x` est remplacé par
+        le nombre de secondes restantes. Les deux champs `restart` et `stop` sont requis
+        (valeur vide = efface le message).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `settings_edit`.
+      operationId: updateServerPoweractionMessages
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - restart
+                - stop
+              properties:
+                restart:
+                  type: string
+                  description: Message du compte à rebours avant redémarrage (`$x` = secondes restantes)
+                  example: Redémarrage du serveur dans $x secondes...
+                stop:
+                  type: string
+                  description: Message du compte à rebours avant arrêt (`$x` = secondes restantes)
+                  example: Arrêt du serveur dans $x secondes...
+      responses:
+        '200':
+          description: Messages mis à jour avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Settings - Edit power actions messages
+                      endpoint:
+                        type: string
+                        example: /server/67890/poweraction/messages
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/icon:
+    patch:
+      tags:
+        - Server
+      summary: Modifier l'icône d'un serveur
+      description: |
+        Définit l'icône du serveur (affichée notamment dans la liste multijoueur Minecraft).
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `settings_edit`.
+      operationId: updateServerIcon
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  description: |
+                    Image au format data URI base64. Types acceptés : `jpg`, `jpeg`,
+                    `png`, `bmp`.
+                  example: data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABA...
+      responses:
+        '200':
+          description: Icône mise à jour avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Settings - Edit server icon
+                      endpoint:
+                        type: string
+                        example: /server/67890/icon
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /user/{id_user}/snapshots:
+    get:
+      tags:
+        - Snapshots
+      summary: Lister les snapshots
+      description: |
+        Renvoie la liste des snapshots du compte : les snapshots disponibles et les créations
+        en cours de traitement.
+
+        **Accès** : le titulaire du compte (la clé doit correspondre à `id_user`).
+      operationId: getUserSnapshots
+      parameters:
+        - name: id_user
+          in: path
+          required: true
+          description: ID de l'utilisateur.
+          schema:
+            type: integer
+            example: 12345
+      responses:
+        '200':
+          description: Liste des snapshots récupérée avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: User - Snapshots - Get user snapshots
+                      endpoint:
+                        type: string
+                        example: /user/12345/snapshots
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          snapshots:
+                            type: array
+                            description: Snapshots du compte, disponibles et en cours de création
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type:
+                                    - integer
+                                    - string
+                                  description: ID de la snapshot. Pour une création en cours, chaîne `job_{job_id}`.
+                                  example: 321
+                                name:
+                                  type: string
+                                  description: Nom de la snapshot.
+                                  example: Avant mise à jour
+                                type:
+                                  type: string
+                                  description: Jeu ou type du serveur d'origine.
+                                  example: Minecraft Java
+                                size:
+                                  type: integer
+                                  description: Taille de la snapshot (Ko).
+                                  example: 7019768
+                                date:
+                                  type: string
+                                  format: date-time
+                                  description: Date de création.
+                                status:
+                                  type: integer
+                                  enum:
+                                    - 0
+                                    - 1
+                                    - 2
+                                  description: État — `0` en attente, `1` disponible, `2` en cours de création.
+                                  example: 1
+                                progress:
+                                  type: integer
+                                  description: Avancement en % (créations en cours uniquement).
+                                  example: 42
+                                job_id:
+                                  type: integer
+                                  description: ID du job de traitement (créations en cours uniquement).
+                                  example: 4567
+                                is_legacy:
+                                  type: boolean
+                                  description: Snapshot issue de l'ancien système de sauvegarde.
+                                  example: false
+                                is_v2_job:
+                                  type: boolean
+                                  description: Présent (`true`) pour une création en cours.
+                                  example: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /user/{id_user}/snapshot:
+    post:
+      tags:
+        - Snapshots
+      summary: Créer une snapshot
+      description: |
+        Crée une snapshot d'un de vos serveurs : une sauvegarde complète que vous pourrez
+        restaurer plus tard, sur ce serveur ou sur un autre.
+
+        Le traitement est **asynchrone** : la réponse renvoie un `job_id` qui identifie le
+        job lancé en arrière-plan.
+
+        **Accès** : le titulaire du compte (la clé doit correspondre à `id_user`).
+      operationId: createSnapshot
+      parameters:
+        - name: id_user
+          in: path
+          required: true
+          description: ID de l'utilisateur.
+          schema:
+            type: integer
+            example: 12345
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id_server
+                - name
+              properties:
+                id_server:
+                  type: integer
+                  description: ID du serveur à sauvegarder.
+                  example: 67890
+                name:
+                  type: string
+                  maxLength: 64
+                  description: Nom de la snapshot.
+                  example: Avant mise à jour
+      responses:
+        '200':
+          description: Snapshot mise en file de traitement
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: User - Snapshots - Create snapshot
+                      endpoint:
+                        type: string
+                        example: /user/12345/snapshot
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          job_id:
+                            type: integer
+                            description: Identifiant du job de traitement (suivi de progression).
+                            example: 4567
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: Une offre payante active est requise
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                api:
+                  description: ''
+                  endpoint: ''
+                  code: 402
+                  error: API_ARCHIVE_NEED_PAID_OFFER
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Limite de snapshots atteinte, ou un traitement est déjà en cours sur ce serveur
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                api:
+                  description: ''
+                  endpoint: ''
+                  code: 409
+                  error: API_SNAPSHOT_ALREADY_PROCESSING
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    put:
+      tags:
+        - Snapshots
+      summary: Restaurer une snapshot
+      description: |
+        Restaure une snapshot sur un serveur cible : le contenu actuel du serveur est
+        remplacé par celui de la snapshot.
+
+        Le traitement est **asynchrone** : la réponse renvoie un `job_id` qui identifie le
+        job lancé en arrière-plan.
+
+        **Accès** : le titulaire du compte (la clé doit correspondre à `id_user`).
+      operationId: restoreSnapshot
+      parameters:
+        - name: id_user
+          in: path
+          required: true
+          description: ID de l'utilisateur.
+          schema:
+            type: integer
+            example: 12345
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id_snapshot
+                - id_server
+              properties:
+                id_snapshot:
+                  type: integer
+                  description: ID de la snapshot à restaurer.
+                  example: 321
+                id_server:
+                  type: integer
+                  description: ID du serveur cible sur lequel restaurer.
+                  example: 67890
+      responses:
+        '200':
+          description: Restauration mise en file de traitement
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: User - Snapshots - Restore snapshot
+                      endpoint:
+                        type: string
+                        example: /user/12345/snapshot
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          job_id:
+                            type: integer
+                            description: Identifiant du job de traitement (suivi de progression).
+                            example: 4568
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: Une offre payante active est requise
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                api:
+                  description: ''
+                  endpoint: ''
+                  code: 402
+                  error: API_ARCHIVE_NEED_PAID_OFFER
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Un traitement est déjà en cours sur le serveur cible
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                api:
+                  description: ''
+                  endpoint: ''
+                  code: 409
+                  error: API_SNAPSHOT_ALREADY_PROCESSING
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /user/{id_user}/snapshot/{id_snapshot}:
+    delete:
+      tags:
+        - Snapshots
+      summary: Supprimer une snapshot
+      description: |
+        Supprime définitivement une snapshot.
+
+        Le traitement est **asynchrone** : la réponse renvoie un `job_id` qui identifie le
+        job lancé en arrière-plan.
+
+        **Accès** : le titulaire du compte (la clé doit correspondre à `id_user`).
+      operationId: deleteSnapshot
+      parameters:
+        - name: id_user
+          in: path
+          required: true
+          description: ID de l'utilisateur.
+          schema:
+            type: integer
+            example: 12345
+        - name: id_snapshot
+          in: path
+          required: true
+          description: ID de la snapshot.
+          schema:
+            type: integer
+            example: 321
+      responses:
+        '200':
+          description: Suppression mise en file de traitement
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: User - Snapshots - Delete snapshot
+                      endpoint:
+                        type: string
+                        example: /user/12345/snapshot/321
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          job_id:
+                            type: integer
+                            description: Identifiant du job de traitement (suivi de progression).
+                            example: 4569
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /server/{id_server}/backups:
+    get:
+      tags:
+        - Server
+      summary: Lister les sauvegardes d'un serveur
+      description: |
+        Renvoie la liste des sauvegardes quotidiennes d'un serveur, triées de la plus récente
+        à la plus ancienne.
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission `saves_view`.
+
+        **Maintenance** : si le système de sauvegarde est en maintenance, l'API répond **503**
+        (`API_SMART_BACKUP_MAINTENANCE`).
+      operationId: getServerBackups
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      responses:
+        '200':
+          description: Liste des sauvegardes récupérée avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Backups - Get backups
+                      endpoint:
+                        type: string
+                        example: /server/67890/backups
+                      code:
+                        type: integer
+                        example: 200
+                      data:
+                        type: object
+                        properties:
+                          backups:
+                            type: array
+                            description: Sauvegardes, de la plus récente à la plus ancienne
+                            items:
+                              type: object
+                              properties:
+                                id:
+                                  type: integer
+                                  description: Identifiant de la sauvegarde
+                                  example: 4815162342
+                                size:
+                                  type: integer
+                                  description: Taille de la sauvegarde (octets)
+                                  example: 524288000
+                                date:
+                                  type: string
+                                  format: date-time
+                                  description: Date de création de la sauvegarde
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Système de sauvegarde en maintenance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                api:
+                  description: ''
+                  endpoint: ''
+                  code: 503
+                  error: API_SMART_BACKUP_MAINTENANCE
+  /server/{id_server}/backup:
+    put:
+      tags:
+        - Server
+      summary: Restaurer une sauvegarde
+      description: |
+        Lance la **restauration** d'une sauvegarde sur un serveur. L'opération est
+        **asynchrone** : la réponse **200** signale uniquement la prise en compte de la demande
+        (le serveur est suspendu le temps de la restauration). Une seule restauration à la fois
+        par serveur.
+
+        **Accès** : propriétaire du serveur, ou sous-utilisateur avec la permission
+        `saves_restore`. Le propriétaire est notifié si l'action vient d'un sous-utilisateur.
+
+        **Maintenance** : si le système de sauvegarde est en maintenance, l'API répond **503**
+        (`API_SMART_BACKUP_MAINTENANCE`).
+      operationId: restoreServerBackup
+      parameters:
+        - name: id_server
+          in: path
+          required: true
+          description: ID du serveur
+          schema:
+            type: integer
+            example: 67890
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id_backup
+              properties:
+                id_backup:
+                  type: integer
+                  description: ID de la sauvegarde à restaurer (parmi celles du serveur)
+                  example: 123
+      responses:
+        '200':
+          description: Demande de restauration prise en compte (traitement asynchrone)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api:
+                    type: object
+                    properties:
+                      description:
+                        type: string
+                        example: Server - Backups - Restore backup
+                      endpoint:
+                        type: string
+                        example: /server/67890/backup
+                      code:
+                        type: integer
+                        example: 200
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Une restauration est déjà en cours sur ce serveur
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                api:
+                  description: ''
+                  endpoint: ''
+                  code: 409
+                  error: API_BACKUP_ALREADY_IN_PROGRESS
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: Système de sauvegarde en maintenance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                api:
+                  description: ''
+                  endpoint: ''
+                  code: 503
+                  error: API_SMART_BACKUP_MAINTENANCE
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Clé API telle qu'affichée dans le panel (déjà encodée, à ne pas ré-encoder).
+  schemas:
+    UserData:
+      type: object
+      properties:
+        user:
+          type: object
+          properties:
+            datas:
+              type: object
+              description: Informations de compte.
+              properties:
+                id:
+                  type: integer
+                  example: 12345
+                pseudo:
+                  type: string
+                  example: Steve
+                mail:
+                  type: string
+                  example: steve@example.com
+                mail_validated:
+                  type: integer
+                  description: 1 si l'e-mail est vérifié.
+                  enum:
+                    - 0
+                    - 1
+                  example: 1
+                money:
+                  type: number
+                  description: Solde de crédits.
+                  example: 12.5
+                lang:
+                  type: string
+                  enum:
+                    - fr
+                    - en
+                  example: fr
+                register_date:
+                  type: string
+                  description: Date d'inscription (`Y-m-d H:i:s`).
+                  example: '2024-01-15 18:42:10'
+            linked_account:
+              type: object
+              description: Comptes de jeu liés (clé présente seulement si le compte est lié).
+              properties:
+                minecraft:
+                  type: object
+                  properties:
+                    uuid:
+                      type: string
+                      example: 853c80ef3c3749fdaa49938b674adae6
+                    name:
+                      type: string
+                      example: Steve
+                discord:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                      example: '123456789012345678'
+                    name:
+                      type: string
+                      example: steve#0001
+    ApiError:
+      type: object
+      properties:
+        api:
+          type: object
+          properties:
+            description:
+              type: string
+              description: Description de l'endpoint appelé
+            endpoint:
+              type: string
+              description: Path de l'endpoint appelé
+            code:
+              type: integer
+              description: Code HTTP de la réponse
+            error:
+              type: string
+              description: Code d'erreur API
+              example: API_MISSING_REQUIRED_FIELDS
+            data:
+              type: object
+              description: Données contextuelles optionnelles selon l'erreur (ex. `id_mybox` sur API_SERVER_EXPIRED, `reason` sur API_SERVER_SUSPENDED).
+    UserServersData:
+      type: object
+      properties:
+        servers_groups:
+          type: object
+          description: |
+            MyBox accessibles par l'utilisateur, **indexées par ID de MyBox**.
+            Chaque valeur :
+          additionalProperties:
+            type: object
+            properties:
+              id:
+                type: integer
+                example: 12345
+              name:
+                type: string
+                example: Ma MyBox
+              owner:
+                type: integer
+                description: 1 si propriétaire, 0 si sous-utilisateur.
+                enum:
+                  - 0
+                  - 1
+                example: 1
+              offer:
+                type: string
+                description: Nom de l'offre.
+                example: MyBox 8
+              resources:
+                type: object
+                description: Ressources de l'offre (cpu en cœurs, ram et disk en Go).
+                properties:
+                  cpu:
+                    type: integer
+                    example: 4
+                  ram:
+                    type: integer
+                    example: 8
+                  disk:
+                    type: integer
+                    example: 50
+              tend:
+                type: string
+                description: Date d'expiration (`Y-m-d H:i:s`).
+                example: '2026-09-01 00:00:00'
+              tend_days:
+                type: integer
+                description: Jours restants avant expiration (0 si expirée).
+                example: 74
+              is_free:
+                type: integer
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_trial:
+                type: integer
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_pro:
+                type: integer
+                description: 1 si MyBox Pro (dédiée).
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_expired:
+                type: integer
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_suspended:
+                type: integer
+                enum:
+                  - 0
+                  - 1
+                example: 0
+        servers:
+          type: array
+          description: Serveurs de l'utilisateur (possédés + accessibles en sous-utilisateur).
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                example: 67890
+              name:
+                type: string
+                example: Survie 1.21
+              id_mybox:
+                type: integer
+                description: MyBox parente.
+                example: 12345
+              id_egg:
+                type: integer
+                description: Type de jeu (egg).
+                example: 1
+              egg_name:
+                type: string
+                example: Minecraft Java
+              egg_icon:
+                type: string
+                example: https://cdn.minestrator.com/eggs/minecraft.png
+              egg_uuid:
+                type: string
+                example: a1b2c3d4-0000-0000-0000-000000000000
+              hashsupport:
+                type: string
+                description: Identifiant support du serveur.
+                example: AB12CD
+              ip:
+                type: string
+                example: 94.231.1.10:25565
+              port:
+                type: integer
+                example: 25565
+              dns:
+                type:
+                  - string
+                  - 'null'
+                description: Sous-domaine complet, si configuré.
+                example: play.mondomaine.com
+              tstart:
+                type: string
+                example: '2024-06-01 12:00:00'
+              tend:
+                type: string
+                example: '2026-09-01 00:00:00'
+              is_bedrock:
+                type: integer
+                description: 1 si serveur Minecraft Bedrock.
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_free:
+                type: integer
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_expired:
+                type: integer
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_suspended:
+                type: integer
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_disabled:
+                type: integer
+                description: 1 si le serveur est désactivé dans sa MyBox.
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              hibernation:
+                type: integer
+                description: 1 si le serveur est en hibernation.
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              owner:
+                type: integer
+                description: 1 si propriétaire du serveur, 0 si sous-utilisateur.
+                enum:
+                  - 0
+                  - 1
+                example: 1
+    MyBoxData:
+      type: object
+      properties:
+        mybox:
+          type: object
+          description: Informations de la MyBox.
+          properties:
+            id:
+              type: integer
+              example: 12345
+            name:
+              type: string
+              example: Ma MyBox
+            hashsupport:
+              type: string
+              description: Identifiant support de la MyBox.
+              example: WQ6KX
+            tstart:
+              type: string
+              example: '2024-06-01 12:00:00'
+            tend:
+              type: string
+              description: Date d'expiration (`Y-m-d H:i:s`).
+              example: '2026-09-01 00:00:00'
+            tend_days:
+              type: integer
+              description: Jours restants avant expiration (0 si expirée).
+              example: 74
+            deletion_days:
+              type: integer
+              description: Jours restants avant suppression (présent uniquement si expirée).
+              example: 14
+            owner:
+              type: integer
+              description: 1 si propriétaire, 0 si sous-utilisateur.
+              enum:
+                - 0
+                - 1
+              example: 1
+            subscription:
+              type: integer
+              description: 1 si un abonnement (renouvellement auto) est actif.
+              enum:
+                - 0
+                - 1
+              example: 1
+            is_free:
+              type: integer
+              enum:
+                - 0
+                - 1
+              example: 0
+            is_trial:
+              type: integer
+              enum:
+                - 0
+                - 1
+              example: 0
+            is_pro:
+              type: integer
+              description: 1 si MyBox Pro (dédiée).
+              enum:
+                - 0
+                - 1
+              example: 0
+            is_expired:
+              type: integer
+              enum:
+                - 0
+                - 1
+              example: 0
+            is_suspended:
+              type: integer
+              enum:
+                - 0
+                - 1
+              example: 0
+            cpu_remaining:
+              type: number
+              description: Cœurs CPU encore disponibles à répartir.
+              example: 2
+            ram_remaining:
+              type: number
+              description: RAM (Go) encore disponible à répartir.
+              example: 4
+        offer:
+          type: object
+          description: Offre de la MyBox (ressources totales).
+          properties:
+            id:
+              type: integer
+              example: 5
+            name:
+              type: string
+              example: MyBox 8
+            price:
+              type: number
+              example: 7.99
+            cpu:
+              type: integer
+              description: Cœurs CPU.
+              example: 4
+            ram:
+              type: integer
+              description: RAM (Go).
+              example: 8
+            disk:
+              type: integer
+              description: Disque inclus dans l'offre (Go).
+              example: 50
+            disk_total:
+              type: integer
+              description: Disque total (offre + options), en Go.
+              example: 70
+            dbsize:
+              type: integer
+              description: Taille max par base de données (Go).
+              example: 10
+            dbnb:
+              type: integer
+              description: Nombre de bases de données autorisées.
+              example: 2
+            pods:
+              type: integer
+              description: Nombre d'IP dédiées disponibles sur l'offre.
+              example: 1
+        servers:
+          type: array
+          description: Serveurs de la MyBox.
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                example: 67890
+              name:
+                type: string
+                example: Survie 1.21
+              egg:
+                type: integer
+                description: Type de jeu (egg).
+                example: 1
+              egg_name:
+                type: string
+                example: Minecraft Java
+              egg_icon:
+                type: string
+                example: https://cdn.minestrator.com/eggs/minecraft.png
+              ip:
+                type: string
+                example: 94.231.1.10:25565
+              cpu:
+                type: integer
+                description: Cœurs CPU alloués.
+                example: 2
+              ram:
+                type: integer
+                description: RAM allouée (Go).
+                example: 4
+              disabled:
+                type: integer
+                description: 1 si le serveur est désactivé.
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_expired:
+                type: integer
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              is_suspended:
+                type: integer
+                enum:
+                  - 0
+                  - 1
+                example: 0
+              location:
+                type: string
+                description: Localisation du datacenter.
+                example: France
+              country:
+                type: string
+                example: France
+              country_iso:
+                type: string
+                example: fr
+    ServerDatas:
+      type: object
+      description: Données du serveur
+      properties:
+        id:
+          type: integer
+          example: 67890
+        uuid:
+          type: string
+          description: UUID complet du serveur
+          example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+        id_daemon:
+          type: integer
+          description: ID du nœud physique hébergeant le serveur
+        id_mybox:
+          type: integer
+          description: ID de la MyBox parente
+          example: 12345
+        offre:
+          type: string
+          description: Nom de l'offre
+        is_free:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: 1 si serveur gratuit
+        hashsupport:
+          type: string
+          description: Identifiant court à communiquer au support
+          example: AB3CD
+        tstart:
+          type: string
+          format: date-time
+          description: Début de la période en cours
+        tend:
+          type: string
+          format: date-time
+          description: Fin de la période en cours (expiration)
+        dedicated_ip:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: 1 si le serveur a une IP dédiée
+        ip:
+          type: string
+          description: IP de connexion au serveur
+          example: 94.231.203.18
+        port:
+          type: integer
+          description: Port principal du serveur
+          example: 25565
+        dns:
+          type:
+            - string
+            - 'null'
+          description: Sous-domaine DNS personnalisé (null si non configuré)
+          example: monserveur.myjeux.fr
+        owner:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: 1 si l'utilisateur authentifié est le propriétaire
+        name:
+          type: string
+          description: Nom du serveur
+          example: Mon serveur Minecraft
+        id_groupe:
+          type:
+            - integer
+            - 'null'
+          description: Groupe d'organisation dans la MyBox
+        ordre:
+          type: integer
+          description: Ordre d'affichage dans la MyBox
+        permissions:
+          type: array
+          description: Permissions du sous-utilisateur sur ce serveur (vide si propriétaire)
+          items:
+            type: string
+        hibernation:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: 1 si le serveur est en hibernation
+    ServerOffer:
+      type: object
+      description: Offre de la MyBox parente
+      properties:
+        name:
+          type: string
+          example: MyBox Diamond
+        is_pro:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: 1 si MyBox Pro (serveur dédié)
+        is_trial:
+          type: integer
+          description: 1 si MyBox d'essai
+          example: 0
+        is_free:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: 1 si MyBox gratuite
+        cpu:
+          type: integer
+          description: CPU de l'offre (cœurs)
+        ram:
+          type: integer
+          description: RAM de l'offre (Go)
+        disk:
+          type: integer
+          description: Disque de l'offre (Go)
+        auto_shutdown_seconds:
+          type: integer
+          description: 'Présent uniquement pour les serveurs gratuits : délai d''arrêt automatique en secondes. 14400 (4 h) par défaut, 86400 (24 h) si le compte possède aussi une MyBox payante active.'
+          example: 14400
+    ServerEgg:
+      type: object
+      description: Jeu/egg du serveur
+      properties:
+        id:
+          type: integer
+          example: 5
+        type:
+          type: integer
+          description: ID du type d'egg
+        name:
+          type: string
+          example: Minecraft Vanilla
+        icon:
+          type: string
+          example: minecraft.png
+        uuid:
+          type: string
+          description: UUID de l'egg
+    ServerSettings:
+      type: object
+      description: Configuration du serveur
+      properties:
+        is_bedrock:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: 1 si serveur Minecraft Bedrock Edition
+        is_bungeecord:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: 1 si serveur BungeeCord/proxy
+        java_memory:
+          type: integer
+          description: Mémoire Java allouée (Mo)
+        image:
+          type: string
+          description: Image Docker utilisée
+          example: ghcr.io/pterodactyl/yolks:java_21
+        id_java_version:
+          type:
+            - integer
+            - 'null'
+          description: ID de la version Java (absent si image non reconnue)
+        startup:
+          type: string
+          description: Commande de démarrage
+        startup_file:
+          type:
+            - string
+            - 'null'
+          description: Fichier JAR de démarrage (si applicable)
+          example: server.jar
+        poweraction_message:
+          type: object
+          description: Messages personnalisés affichés lors des actions d'alimentation avec countdown
+          properties:
+            restart:
+              type: string
+              example: Server restarting in $x seconds...
+            stop:
+              type: string
+              example: Server stopping in $x seconds...
+    ServerFullData:
+      type: object
+      properties:
+        server:
+          $ref: '#/components/schemas/ServerDatas'
+        websocket:
+          type: object
+          description: Connexion websocket pour la console en temps réel (champs vides si serveur hiberné)
+          properties:
+            url:
+              type: string
+              example: wss://node1.mystrator.com:8080
+            token:
+              type: string
+              example: eyJhbGciOiJI...
+        mybox:
+          type: object
+          description: Infos résumées de la MyBox parente
+          properties:
+            name:
+              type: string
+              example: Ma MyBox
+            hashsupport:
+              type: string
+              description: Identifiant court de la MyBox à communiquer au support
+              example: WQ6KX
+            refund_requested_at:
+              type: string
+              format: date-time
+              description: Date de la dernière demande de remboursement (absent si aucune)
+            reduction:
+              type: integer
+              description: Pourcentage de réduction promo récurrente (absent si aucune)
+            to_review:
+              type: integer
+              enum:
+                - 0
+                - 1
+              description: 1 si l'utilisateur peut laisser un avis sur cette MyBox
+            resources:
+              type: object
+              properties:
+                cpu:
+                  type: integer
+                  description: CPU alloué à ce serveur (cœurs)
+                ram:
+                  type: integer
+                  description: RAM allouée à ce serveur (Go)
+                disk:
+                  type: integer
+                  description: Disque total de la MyBox (Go) — offre + options souscrites
+        offer:
+          $ref: '#/components/schemas/ServerOffer'
+        egg:
+          $ref: '#/components/schemas/ServerEgg'
+        settings:
+          $ref: '#/components/schemas/ServerSettings'
+        options:
+          type: array
+          description: Options souscrites pour ce serveur
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+                example: RAM +2 Go
+              price:
+                type: string
+                example: '3.99'
+        history:
+          type: array
+          description: Dernières actions sur le serveur (max 20)
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date-time
+              ip:
+                type:
+                  - string
+                  - 'null'
+                description: IP à l'origine de l'action (null si action staff/infrastructure)
+              is_staff:
+                type: boolean
+                description: true si l'action a été effectuée par le staff ou l'infrastructure
+              action:
+                type: string
+                description: 'Nom de l''action (ex: power.start, maintenance.reinstall)'
+                example: power.start
+        ports:
+          type: array
+          description: Ports additionnels alloués — présent si propriétaire ou permission `ports_view`
+          items:
+            type: object
+            properties:
+              port:
+                type: integer
+                example: 25566
+              ip:
+                type: string
+                example: 94.231.203.18
+              description:
+                type: string
+                description: Note libre associée au port
+                example: Dynmap
+        sftp:
+          type: object
+          description: Identifiants SFTP — présent si propriétaire ou permission `sftp`
+          properties:
+            protocol:
+              type: string
+              example: sftp
+            host:
+              type: string
+              example: node1.mystrator.com
+            port:
+              type: integer
+              example: 2022
+            user:
+              type: string
+              example: player123.abc12345
+            password:
+              type: string
+        livemap:
+          type: object
+          description: Informations livemap — présent si propriétaire ou permission `livemap`
+          properties:
+            option:
+              type: integer
+              enum:
+                - 0
+                - 1
+              description: 1 si l'option livemap est souscrite
+            enabled:
+              type: integer
+              enum:
+                - 0
+                - 1
+              description: 1 si la livemap est activée
+            generated:
+              type: integer
+              enum:
+                - 0
+                - 1
+              description: 1 si la carte est générée
+            url:
+              type: string
+              example: https://node1.mystrator.com/s/abc12345-...
+            start:
+              type: string
+              format: date-time
+              description: Début de la dernière génération
+            end:
+              type: string
+              format: date-time
+              description: Fin de la dernière génération
+            is_free:
+              type: integer
+              enum:
+                - 0
+                - 1
+              description: 1 si l'option livemap serait gratuite pour cette MyBox (offres ≥ 19,99 €)
+        onboarding:
+          type: object
+          description: État du guide d'onboarding du serveur
+          properties:
+            eligible:
+              type: boolean
+              description: true si le serveur est éligible au guide (serveurs récents uniquement)
+            status:
+              type: string
+              description: État du guide pour ce serveur
+              example: not_started
+            user_disabled:
+              type: boolean
+              description: true si l'utilisateur a désactivé les guides sur son compte
+    ServerLiveData:
+      type: object
+      properties:
+        state:
+          type: string
+          enum:
+            - online
+            - starting
+            - stopping
+            - offline
+          description: État courant du serveur
+        status:
+          type:
+            - string
+            - 'null'
+          description: Statut interne (null si le serveur est hors-ligne sans état remonté)
+        stats:
+          type: object
+          description: |
+            Statistiques temps réel. Les blocs `cpu`/`memory`/`disk`/`network` sont
+            présents dès que le serveur n'est pas hors-ligne. Les blocs `players`,
+            `uptime`, `version`, `motd`, `hostname` ne sont présents que lorsque le
+            serveur est `online`.
+          properties:
+            state:
+              type: string
+              enum:
+                - online
+                - starting
+                - stopping
+                - offline
+            cpu:
+              type: object
+              description: Utilisation CPU (unités en centièmes de cœur — 100 = 1 cœur)
+              properties:
+                current:
+                  type: number
+                  description: Utilisation CPU instantanée
+                dedicated:
+                  type: integer
+                  description: CPU dédié au serveur
+                flexcore:
+                  type: integer
+                  description: CPU supplémentaire mutualisé (FlexCore) fourni par l'offre
+                limit:
+                  type: integer
+                  description: CPU total disponible (dédié + FlexCore)
+                percent:
+                  type: integer
+                  description: Utilisation CPU arrondie (100 = 1 cœur)
+                is_bursting:
+                  type: boolean
+                  description: true si l'utilisation dépasse le CPU dédié (consommation du FlexCore)
+            memory:
+              type: object
+              description: Mémoire (Mo)
+              properties:
+                current:
+                  type: integer
+                  description: Mémoire utilisée (Mo)
+                limit:
+                  type: integer
+                  description: Limite mémoire (Mo)
+                percent:
+                  type: integer
+                  description: Pourcentage d'utilisation
+            disk:
+              type: object
+              description: Disque (Mo)
+              properties:
+                current:
+                  type: integer
+                  description: Espace disque utilisé (Mo)
+                limit:
+                  type: integer
+                  description: Limite disque (Mo)
+                percent:
+                  type: integer
+                  description: Pourcentage d'utilisation
+            network:
+              type: object
+              description: Compteurs réseau cumulés (octets) remontés par le démon
+              properties:
+                rx_bytes:
+                  type: integer
+                  description: Octets reçus
+                tx_bytes:
+                  type: integer
+                  description: Octets envoyés
+            uptime:
+              type: object
+              description: Durée de fonctionnement (présent uniquement si `online`)
+              properties:
+                days:
+                  type: integer
+                hours:
+                  type: integer
+                minutes:
+                  type: integer
+                total_seconds:
+                  type: integer
+                  description: Uptime total en secondes
+            players:
+              type: object
+              description: Joueurs connectés (présent uniquement si `online`, selon le jeu)
+              properties:
+                current:
+                  type: integer
+                  description: Nombre de joueurs connectés
+                limit:
+                  type: integer
+                  description: Nombre maximum de slots
+                list:
+                  type: array
+                  description: Liste des pseudos connectés (plafonnée à 300)
+                  items:
+                    type: string
+            version:
+              type: string
+              description: Version du serveur (présent uniquement si `online`, selon le jeu)
+            motd:
+              type: string
+              description: Message du jour, nettoyé des codes de couleur (présent uniquement si `online`, selon le jeu)
+            hostname:
+              type: string
+              description: Hostname annoncé par le serveur (présent uniquement si `online`, selon le jeu)
+  responses:
+    Unauthorized:
+      description: Token invalide ou manquant
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            api:
+              description: ''
+              endpoint: ''
+              code: 401
+              error: API_INVALID_TOKEN
+    Forbidden:
+      description: Accès interdit (permissions insuffisantes, compte suspendu)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            api:
+              description: ''
+              endpoint: ''
+              code: 403
+              error: API_FORBIDDEN
+    RateLimited:
+      description: Trop de requêtes — rate limit atteint
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            api:
+              description: ''
+              endpoint: ''
+              code: 429
+              error: API_RATE_LIMITED
+    BadRequest:
+      description: Requête invalide (champs manquants ou incorrects)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            api:
+              description: ''
+              endpoint: ''
+              code: 400
+              error: API_MISSING_REQUIRED_FIELDS
+    NotFound:
+      description: Ressource introuvable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            api:
+              description: ''
+              endpoint: ''
+              code: 404
+              error: API_EMPTY_RESOURCE
+    ServerError:
+      description: Erreur serveur interne
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            api:
+              description: ''
+              endpoint: ''
+              code: 500
+              error: API_GENERIC_ERROR
