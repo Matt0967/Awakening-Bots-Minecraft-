@@ -5,10 +5,12 @@ hébergé sur Minestrator (API officielle https://mine.sttr.io).
 Référence des endpoints utilisés : voir minestrator-api-fr.yaml (spec OpenAPI
 fournie par Minestrator), sections "MyBox" et "Server".
 
-Commandes :
-- /start  : réactive le serveur (PATCH /mybox/{id_mybox}/server/enable).
-- /stop   : désactive le serveur, réservé aux admins (PATCH .../server/disable).
-- /status : affiche l'état + les joueurs connectés (GET /server/{id_server}/live).
+Commandes (start/restart/status ouvertes à tous les membres, stop réservé aux
+admins) :
+- /start   : réactive le serveur (PATCH /mybox/{id_mybox}/server/enable).
+- /restart : redémarre le serveur en cours (PUT .../poweraction restart10).
+- /stop    : désactive le serveur, réservé aux admins (PATCH .../server/disable).
+- /status  : affiche l'état + les joueurs connectés (GET /server/{id_server}/live).
 
 Tâches de fond :
 - Redémarrage automatique périodique (toutes les RESTART_INTERVAL_HOURS heures,
@@ -16,6 +18,9 @@ Tâches de fond :
   redémarre le serveur même si des joueurs sont en ligne.
 - Veille de déconnexion : si le serveur passe hors ligne de façon inattendue,
   un message est envoyé dans le salon pour inviter les joueurs à retaper /start.
+- Panneau de statistiques en direct : un message (embed) mis à jour
+  périodiquement dans un salon dédié, avec l'état, le CPU, la RAM, le disque,
+  les joueurs connectés et l'uptime du serveur.
 
 Toutes les informations sensibles sont lues depuis des variables d'environnement.
 """
@@ -26,7 +31,6 @@ import asyncio
 
 import aiohttp
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 from dotenv import load_dotenv
 
@@ -50,21 +54,29 @@ MINESTRATOR_API_BASE_URL = os.getenv("MINESTRATOR_API_BASE_URL", "https://mine.s
 ANNOUNCE_CHANNEL_ID = os.getenv("ANNOUNCE_CHANNEL_ID")
 ANNOUNCE_CHANNEL_ID = int(ANNOUNCE_CHANNEL_ID) if ANNOUNCE_CHANNEL_ID else None
 
+# Salon Discord où poster/actualiser le panneau de statistiques en direct
+# (CPU, RAM, disque, joueurs, uptime). Optionnel : sans valeur, retombe sur
+# ANNOUNCE_CHANNEL_ID ; si aucun des deux n'est défini, le panneau est désactivé.
+STATS_CHANNEL_ID = os.getenv("STATS_CHANNEL_ID")
+STATS_CHANNEL_ID = int(STATS_CHANNEL_ID) if STATS_CHANNEL_ID else ANNOUNCE_CHANNEL_ID
+
 # Intervalle entre deux redémarrages automatiques (en heures).
 RESTART_INTERVAL_HOURS = float(os.getenv("RESTART_INTERVAL_HOURS", "4"))
 
-# Délai entre le message d'annonce et le lancement effectif du redémarrage (en secondes).
+# Délai entre le message d'annonce et le lancement effectif du redémarrage
+# automatique (en secondes). Un /restart manuel se lance lui immédiatement.
 RESTART_WARNING_SECONDS = int(os.getenv("RESTART_WARNING_SECONDS", "30"))
 
 # Intervalle de la veille "serveur hors ligne" (en secondes). Raisonnable pour
 # rester dans le cadre d'un usage normal de l'API (voir CGU Minestrator).
 STATUS_POLL_INTERVAL_SECONDS = int(os.getenv("STATUS_POLL_INTERVAL_SECONDS", "120"))
 
-# Rôle Discord autorisé à démarrer le serveur (/start). Vide = tout le monde.
-ALLOWED_ROLE_NAME = os.getenv("ALLOWED_ROLE_NAME", "")
+# Intervalle de rafraîchissement du panneau de statistiques (en secondes).
+STATS_UPDATE_INTERVAL_SECONDS = int(os.getenv("STATS_UPDATE_INTERVAL_SECONDS", "60"))
 
 # Rôle Discord autorisé à arrêter le serveur (/stop). Vide = utilisateurs avec
-# la permission Discord "Gérer le serveur" uniquement.
+# la permission Discord "Gérer le serveur" uniquement. /start, /restart et
+# /status restent volontairement ouverts à tous les membres, sans restriction.
 ADMIN_ROLE_NAME = os.getenv("ADMIN_ROLE_NAME", "")
 
 if not DISCORD_TOKEN:
@@ -208,15 +220,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 last_known_state: str | None = None
 
 
-def has_allowed_role(interaction: discord.Interaction) -> bool:
-    """Vérifie si l'utilisateur a le rôle autorisé pour /start (vide = tout le monde)."""
-    if not ALLOWED_ROLE_NAME:
-        return True
-    if not isinstance(interaction.user, discord.Member):
-        return False
-    return any(role.name == ALLOWED_ROLE_NAME for role in interaction.user.roles)
-
-
 def has_admin_permission(interaction: discord.Interaction) -> bool:
     """Vérifie si l'utilisateur peut arrêter le serveur (/stop)."""
     if not isinstance(interaction.user, discord.Member):
@@ -246,6 +249,12 @@ async def on_ready():
             "alerte hors-ligne désactivés."
         )
 
+    if STATS_CHANNEL_ID:
+        if not stats_panel_loop.is_running():
+            stats_panel_loop.start()
+    else:
+        logger.warning("STATS_CHANNEL_ID non configuré : panneau de statistiques désactivé.")
+
 
 # ---------------------------------------------------------------------------
 # Commandes slash
@@ -254,12 +263,7 @@ async def on_ready():
 
 @bot.tree.command(name="start", description="Démarre le serveur Minecraft Sengoku SMP")
 async def start(interaction: discord.Interaction):
-    if not has_allowed_role(interaction):
-        await interaction.response.send_message(
-            "Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True
-        )
-        return
-
+    # Ouvert à tous les membres, sans restriction de rôle.
     await interaction.response.defer(thinking=True)
 
     try:
@@ -283,6 +287,45 @@ async def start(interaction: discord.Interaction):
     except Exception:
         logger.exception("Erreur inattendue lors de la commande /start.")
         await interaction.followup.send("❌ Une erreur inattendue est survenue.")
+
+
+@bot.tree.command(name="restart", description="Redémarre le serveur Minecraft Sengoku SMP")
+async def restart(interaction: discord.Interaction):
+    # Ouvert à tous les membres, sans restriction de rôle.
+    await interaction.response.defer(thinking=True)
+
+    try:
+        live = await minestrator.get_live()
+    except MinestratorAPIError as e:
+        await interaction.followup.send(f"⚠️ Impossible de vérifier l'état du serveur : {e}")
+        return
+    except aiohttp.ClientError:
+        logger.exception("Erreur réseau lors de l'appel à l'API Minestrator (restart).")
+        await interaction.followup.send("❌ Impossible de contacter l'API Minestrator pour le moment. Réessaie plus tard.")
+        return
+    except Exception:
+        logger.exception("Erreur inattendue lors de la commande /restart.")
+        await interaction.followup.send("❌ Une erreur inattendue est survenue.")
+        return
+
+    state = live.get("state", "offline")
+    if state == "offline":
+        await interaction.followup.send("ℹ️ Le serveur est hors ligne. Utilise plutôt `/start` pour le démarrer.")
+        return
+    if state in ("starting", "stopping"):
+        await interaction.followup.send(
+            f"ℹ️ Le serveur est **{STATE_LABELS_FR.get(state, state)}**, réessaie dans un instant."
+        )
+        return
+
+    # state == "online" : on redémarre tout de suite (poweraction restart10
+    # diffuse déjà son propre compte à rebours de 10s en jeu, pas besoin d'attendre en plus).
+    await execute_restart_sequence(
+        interaction.followup.send,
+        live.get("stats", {}),
+        wait_seconds=0,
+        intro=f"🔄 Redémarrage du serveur demandé par {interaction.user.mention}.",
+    )
 
 
 @bot.tree.command(name="stop", description="Arrête le serveur Minecraft Sengoku SMP (admins uniquement)")
@@ -342,56 +385,40 @@ async def status(interaction: discord.Interaction):
 # ---------------------------------------------------------------------------
 
 
-async def _get_announce_channel() -> discord.abc.Messageable | None:
-    channel = bot.get_channel(ANNOUNCE_CHANNEL_ID)
+async def _get_channel(channel_id: int | None) -> discord.abc.Messageable | None:
+    if channel_id is None:
+        return None
+    channel = bot.get_channel(channel_id)
     if channel is None:
         try:
-            channel = await bot.fetch_channel(ANNOUNCE_CHANNEL_ID)
+            channel = await bot.fetch_channel(channel_id)
         except discord.DiscordException:
-            logger.exception("Impossible de récupérer le salon d'annonces (ANNOUNCE_CHANNEL_ID=%s).", ANNOUNCE_CHANNEL_ID)
+            logger.exception("Impossible de récupérer le salon (channel_id=%s).", channel_id)
             return None
     return channel
 
 
-@tasks.loop(hours=RESTART_INTERVAL_HOURS)
-async def auto_restart_loop():
-    """Redémarre le serveur périodiquement, même si des joueurs sont connectés."""
-    channel = await _get_announce_channel()
-    if channel is None:
-        return
+async def execute_restart_sequence(send, stats: dict, *, wait_seconds: int, intro: str) -> None:
+    """Prévient, patiente éventuellement, redémarre le serveur puis attend son retour en ligne.
 
-    try:
-        live = await minestrator.get_live()
-    except (MinestratorAPIError, aiohttp.ClientError):
-        logger.exception("Impossible de vérifier l'état du serveur avant le redémarrage automatique.")
-        return
-
-    state = live.get("state", "offline")
-    if state != "online":
-        # Rien à redémarrer si le serveur n'est pas en ligne.
-        return
-
-    stats = live.get("stats", {})
+    `send` est un callable async (channel.send ou interaction.followup.send) qui
+    prend un simple message texte. Suppose que le serveur est déjà `online`.
+    """
     players_summary = format_players(stats)
+    await send(f"{intro}\n👥 Joueurs actuellement connectés : {players_summary}.")
 
-    await channel.send(
-        f"🔄 Redémarrage automatique du serveur dans {RESTART_WARNING_SECONDS} secondes "
-        f"(maintenance périodique toutes les {RESTART_INTERVAL_HOURS:g}h).\n"
-        f"👥 Joueurs actuellement connectés : {players_summary}.\n"
-        "Le redémarrage a lieu même si des joueurs sont en ligne, désolé pour la gêne !"
-    )
-
-    await asyncio.sleep(RESTART_WARNING_SECONDS)
+    if wait_seconds:
+        await asyncio.sleep(wait_seconds)
 
     try:
         await minestrator.power_action("restart10")
     except (MinestratorAPIError, aiohttp.ClientError):
-        logger.exception("Échec de l'appel poweraction restart10 lors du redémarrage automatique.")
-        await channel.send("⚠️ Le redémarrage automatique a échoué. Un admin devra vérifier le serveur.")
+        logger.exception("Échec de l'appel poweraction restart10.")
+        await send("⚠️ Le redémarrage a échoué. Réessaie plus tard ou préviens un admin.")
         return
 
     # On attend que le serveur revienne en ligne (poweraction restart10 bloque
-    # déjà ~10s, on laisse ensuite un peu de marge pour le boot du serveur).
+    # déjà ~10s côté API, on laisse ensuite un peu de marge pour le boot du serveur).
     back_online = False
     for _ in range(18):  # jusqu'à ~90s d'attente supplémentaire
         await asyncio.sleep(5)
@@ -404,12 +431,41 @@ async def auto_restart_loop():
             break
 
     if back_online:
-        await channel.send("✅ Redémarrage terminé, le serveur est de nouveau en ligne.")
+        await send("✅ Redémarrage terminé, le serveur est de nouveau en ligne.")
     else:
-        await channel.send(
+        await send(
             "🔴 Le serveur ne semble pas être remonté automatiquement après le redémarrage. "
-            "Retapez `/start` pour le relancer !"
+            "Retape `/start` pour le relancer !"
         )
+
+
+@tasks.loop(hours=RESTART_INTERVAL_HOURS)
+async def auto_restart_loop():
+    """Redémarre le serveur périodiquement, même si des joueurs sont connectés."""
+    channel = await _get_channel(ANNOUNCE_CHANNEL_ID)
+    if channel is None:
+        return
+
+    try:
+        live = await minestrator.get_live()
+    except (MinestratorAPIError, aiohttp.ClientError):
+        logger.exception("Impossible de vérifier l'état du serveur avant le redémarrage automatique.")
+        return
+
+    if live.get("state") != "online":
+        # Rien à redémarrer si le serveur n'est pas en ligne.
+        return
+
+    await execute_restart_sequence(
+        channel.send,
+        live.get("stats", {}),
+        wait_seconds=RESTART_WARNING_SECONDS,
+        intro=(
+            f"🔄 Redémarrage automatique du serveur dans {RESTART_WARNING_SECONDS} secondes "
+            f"(maintenance périodique toutes les {RESTART_INTERVAL_HOURS:g}h). "
+            "Le redémarrage a lieu même si des joueurs sont en ligne, désolé pour la gêne !"
+        ),
+    )
 
 
 @tasks.loop(seconds=STATUS_POLL_INTERVAL_SECONDS)
@@ -417,7 +473,7 @@ async def watch_offline_loop():
     """Alerte le salon si le serveur passe hors ligne de façon inattendue."""
     global last_known_state
 
-    channel = await _get_announce_channel()
+    channel = await _get_channel(ANNOUNCE_CHANNEL_ID)
     if channel is None:
         return
 
@@ -437,8 +493,125 @@ async def watch_offline_loop():
     last_known_state = state
 
 
+# --- Panneau de statistiques en direct -------------------------------------
+
+STATS_EMBED_TITLE = "📊 Sengoku SMP — Performances en direct"
+
+STATE_COLORS = {
+    "online": discord.Color.green(),
+    "starting": discord.Color.gold(),
+    "stopping": discord.Color.orange(),
+    "offline": discord.Color.red(),
+}
+
+# Message du panneau, mis en cache une fois trouvé/créé pour éviter de
+# reparcourir l'historique du salon à chaque rafraîchissement.
+stats_message: discord.Message | None = None
+
+
+def build_stats_embed(live: dict) -> discord.Embed:
+    state = live.get("state", "offline")
+    stats = live.get("stats", {})
+
+    embed = discord.Embed(
+        title=STATS_EMBED_TITLE,
+        color=STATE_COLORS.get(state, discord.Color.greyple()),
+        timestamp=discord.utils.utcnow(),
+    )
+    embed.add_field(
+        name="État",
+        value=f"{STATE_EMOJIS.get(state, '⚪')} {STATE_LABELS_FR.get(state, state)}",
+        inline=False,
+    )
+
+    cpu = stats.get("cpu")
+    if cpu:
+        embed.add_field(
+            name="CPU",
+            value=f"{cpu.get('percent', 0)}% (limite : {cpu.get('limit', 0)} centièmes de cœur)",
+            inline=True,
+        )
+    memory = stats.get("memory")
+    if memory:
+        embed.add_field(
+            name="Mémoire",
+            value=f"{memory.get('current', 0)} / {memory.get('limit', 0)} Mo ({memory.get('percent', 0)}%)",
+            inline=True,
+        )
+    disk = stats.get("disk")
+    if disk:
+        embed.add_field(
+            name="Disque",
+            value=f"{disk.get('current', 0)} / {disk.get('limit', 0)} Mo ({disk.get('percent', 0)}%)",
+            inline=True,
+        )
+
+    if state == "online":
+        embed.add_field(name="Joueurs", value=format_players(stats), inline=False)
+        uptime = stats.get("uptime")
+        if uptime:
+            embed.add_field(
+                name="Uptime",
+                value=f"{uptime.get('days', 0)}j {uptime.get('hours', 0)}h {uptime.get('minutes', 0)}min",
+                inline=True,
+            )
+
+    embed.set_footer(text="Dernière mise à jour")
+    return embed
+
+
+async def _get_stats_message(channel: discord.abc.Messageable) -> discord.Message | None:
+    """Retrouve le message du panneau déjà posté par le bot, ou en crée un nouveau."""
+    global stats_message
+    if stats_message is not None:
+        return stats_message
+
+    try:
+        async for msg in channel.history(limit=20):
+            if msg.author == bot.user and msg.embeds and msg.embeds[0].title == STATS_EMBED_TITLE:
+                stats_message = msg
+                return stats_message
+    except discord.DiscordException:
+        logger.exception("Impossible de parcourir l'historique du salon de statistiques.")
+        return None
+
+    try:
+        stats_message = await channel.send(embed=discord.Embed(title=STATS_EMBED_TITLE, description="Chargement…"))
+    except discord.DiscordException:
+        logger.exception("Impossible de créer le message du panneau de statistiques.")
+        return None
+    return stats_message
+
+
+@tasks.loop(seconds=STATS_UPDATE_INTERVAL_SECONDS)
+async def stats_panel_loop():
+    """Met à jour périodiquement l'embed de statistiques en direct."""
+    global stats_message
+
+    channel = await _get_channel(STATS_CHANNEL_ID)
+    if channel is None:
+        return
+
+    try:
+        live = await minestrator.get_live()
+    except (MinestratorAPIError, aiohttp.ClientError):
+        logger.exception("Erreur lors de la récupération des statistiques pour le panneau.")
+        return
+
+    message = await _get_stats_message(channel)
+    if message is None:
+        return
+
+    try:
+        await message.edit(embed=build_stats_embed(live))
+    except discord.DiscordException:
+        logger.exception("Impossible de mettre à jour le message du panneau de statistiques.")
+        stats_message = None  # on retentera une recherche/création au prochain tour
+
+
 @auto_restart_loop.before_loop
 @watch_offline_loop.before_loop
+@stats_panel_loop.before_loop
 async def _before_loops():
     await bot.wait_until_ready()
 

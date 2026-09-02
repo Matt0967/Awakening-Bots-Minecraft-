@@ -6,14 +6,21 @@ au panel d'administration.
 
 ## Commandes
 
-- `/start` — démarre le serveur via l'API Minestrator (`PATCH /mybox/{id_mybox}/server/enable`).
-- `/stop` — arrête le serveur, réservé aux admins (`PATCH .../server/disable`).
-- `/status` — affiche l'état actuel du serveur et les joueurs connectés (`GET /server/{id_server}/live`).
+- `/start` — démarre le serveur via l'API Minestrator (`PATCH /mybox/{id_mybox}/server/enable`). **Ouvert à tous les membres.**
+- `/restart` — redémarre le serveur en cours (`PUT .../poweraction` avec `restart10`). **Ouvert à tous les membres.**
+- `/stop` — arrête le serveur (`PATCH .../server/disable`). **Réservé aux admins.**
+- `/status` — affiche l'état actuel du serveur et les joueurs connectés (`GET /server/{id_server}/live`). Ouvert à tous.
 
-Le bot fait aussi tourner deux tâches de fond (voir section "Redémarrage
-automatique" plus bas) : un redémarrage périodique toutes les 4h, et une
-alerte dans le salon Discord si le serveur tombe hors ligne de façon
-inattendue.
+`/start` et `/restart` sont volontairement accessibles à n'importe quel membre
+du serveur Discord, sans rôle particulier — c'est tout l'intérêt du bot :
+permettre à tes joueurs d'allumer/redémarrer le serveur sans accès au panel.
+Seul `/stop` est restreint (voir "Permissions Discord nécessaires" plus bas).
+
+Le bot fait aussi tourner trois tâches de fond (voir sections "Redémarrage
+automatique" et "Panneau de statistiques" plus bas) : un redémarrage
+périodique toutes les 4h, une alerte dans le salon Discord si le serveur tombe
+hors ligne de façon inattendue, et un panneau de statistiques mis à jour en
+direct.
 
 La documentation officielle de l'API (spec OpenAPI) est incluse dans ce dépôt :
 [`minestrator-api-fr.yaml`](./minestrator-api-fr.yaml). C'est la source de
@@ -87,7 +94,7 @@ python main.py
 
 Si tout fonctionne, tu verras dans le terminal `Connecté en tant que ...` puis
 `X commande(s) slash synchronisée(s).`. Va sur ton serveur Discord et tape `/`
-pour voir apparaître `/start` et `/status`.
+pour voir apparaître `/start`, `/restart`, `/stop` et `/status`.
 
 > Note : la synchronisation globale des slash commands peut prendre jusqu'à
 > une heure pour apparaître partout la première fois. Pour un test immédiat en
@@ -113,7 +120,9 @@ Render et Koyeb fonctionnent sur le même principe.
    mêmes que dans `.env`) :
    - `DISCORD_TOKEN`
    - `MINESTRATOR_API_KEY`
+   - `MYBOX_ID`
    - `SERVER_ID`
+   - `ANNOUNCE_CHANNEL_ID` (et `STATS_CHANNEL_ID` si différent)
 6. Déploie. Railway relance automatiquement le bot s'il crashe et le fait
    tourner en continu tant que ton crédit gratuit n'est pas épuisé.
 
@@ -148,7 +157,24 @@ Ces deux tâches ne démarrent que si `ANNOUNCE_CHANNEL_ID` est renseigné dans
 (Réglages utilisateur > Avancés > Mode développeur), puis clic droit sur le
 salon > "Copier l'identifiant".
 
-## 5. Dépôt Git et GitHub
+## 5. Panneau de statistiques en direct
+
+Si `STATS_CHANNEL_ID` (ou à défaut `ANNOUNCE_CHANNEL_ID`) est renseigné, le
+bot poste un message (embed) dans ce salon et le **met à jour sur place**
+toutes les `STATS_UPDATE_INTERVAL_SECONDS` secondes (1 min par défaut) — pas
+de spam de nouveaux messages, un seul qui s'actualise. Il affiche :
+
+- l'état du serveur (en ligne / hors ligne / démarrage / arrêt)
+- l'utilisation CPU, mémoire et disque (`GET /server/{id_server}/live`)
+- les joueurs connectés (nombre + pseudos)
+- l'uptime, quand le serveur est en ligne
+
+Aucun log de la console n'est affiché — uniquement les métriques de
+performance, comme demandé. Le bot retrouve automatiquement son propre
+message au redémarrage (il cherche dans les 20 derniers messages du salon) au
+lieu d'en recréer un nouveau à chaque fois.
+
+## 6. Dépôt Git et GitHub
 
 Le dépôt local a été initialisé et lié au dépôt distant
 `https://github.com/Matt0967/Awakening-Bots-Minecraft-.git`. Les secrets
@@ -163,15 +189,17 @@ Lors de l'invitation du bot (OAuth2 URL Generator), coche uniquement :
   - `Send Messages` (répondre dans les salons)
   - `Use Slash Commands` (généralement inclus automatiquement avec le scope
     `applications.commands`)
-  - `Embed Links` (optionnel, si tu veux enrichir les réponses plus tard)
+  - `Embed Links` (nécessaire pour le panneau de statistiques)
+  - `Read Message History` (le bot relit le salon de statistiques au
+    redémarrage pour retrouver et mettre à jour son propre message)
 
 Aucune permission d'administration n'est nécessaire — le bot n'a besoin
 d'aucun accès aux salons vocaux, à la modération, ou à la gestion du serveur
 Discord. Toute la logique de démarrage/arrêt passe par l'API Minestrator, pas
 par Discord.
 
-Si tu utilises `ALLOWED_ROLE_NAME` (pour `/start`) ou `ADMIN_ROLE_NAME` (pour
-`/stop`) pour restreindre l'usage à un rôle spécifique, aucune permission
-Discord supplémentaire n'est requise : la vérification se fait directement
-dans le code du bot. Par défaut (sans `ADMIN_ROLE_NAME`), `/stop` est réservé
-aux membres ayant la permission Discord native **"Gérer le serveur"**.
+`/start`, `/restart` et `/status` sont utilisables par **tout membre du
+serveur Discord**, sans configuration particulière. Seul `/stop` est
+restreint : par défaut, réservé aux membres ayant la permission Discord native
+**"Gérer le serveur"** ; tu peux le restreindre à un rôle précis à la place en
+définissant `ADMIN_ROLE_NAME` dans `.env`.
