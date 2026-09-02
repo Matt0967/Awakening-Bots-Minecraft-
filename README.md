@@ -6,10 +6,16 @@ au panel d'administration.
 
 ## Commandes
 
-- `/start` — démarre le serveur via l'API Minestrator (`PATCH /mybox/{id_mybox}/server/enable`). **Ouvert à tous les membres.**
-- `/restart` — redémarre le serveur en cours (`PUT .../poweraction` avec `restart10`). **Ouvert à tous les membres.**
-- `/stop` — arrête le serveur (`PATCH .../server/disable`). **Réservé aux admins.**
+- `/start` — démarre le serveur (`PUT /server/{id_server}/poweraction` avec `"start"`). **Ouvert à tous les membres.**
+- `/restart` — redémarre le serveur en cours (`PUT .../poweraction` avec `"restart10"`). **Ouvert à tous les membres.**
+- `/stop` — arrête le serveur (`PUT .../poweraction` avec `"stop10"`). **Réservé aux admins.**
 - `/status` — affiche l'état actuel du serveur et les joueurs connectés (`GET /server/{id_server}/live`). Ouvert à tous.
+
+> Note technique : l'API expose aussi `PATCH /mybox/{id_mybox}/server/enable|disable`,
+> mais cet endpoint renvoie `403 API_MYBOX_FREE_FORBIDDEN` sur les MyBox
+> gratuites (il réalloue les ressources partagées entre plusieurs serveurs).
+> Le bot utilise donc uniquement `poweraction`, qui contrôle le process d'un
+> serveur déjà alloué et fonctionne sur l'offre gratuite.
 
 `/start` et `/restart` sont volontairement accessibles à n'importe quel membre
 du serveur Discord, sans rôle particulier — c'est tout l'intérêt du bot :
@@ -27,7 +33,7 @@ La documentation officielle de l'API (spec OpenAPI) est incluse dans ce dépôt 
 vérité si Minestrator fait évoluer son API — `main.py` s'appuie exactement
 dessus (endpoints, headers, schémas de réponse/erreur).
 
-## 1. Récupérer ta clé API, ton ID de MyBox et ton ID de serveur sur Minestrator
+## 1. Récupérer ta clé API et ton ID de serveur sur Minestrator
 
 1. Connecte-toi sur https://minestrator.com puis va dans
    **Compte → Clés API** (directement : https://minestrator.com/my/account?section=api).
@@ -41,10 +47,11 @@ dessus (endpoints, headers, schémas de réponse/erreur).
    peut cependant faire désactiver l'accès API — reste dans les intervalles
    par défaut du bot (`RESTART_INTERVAL_HOURS`, `STATUS_POLL_INTERVAL_SECONDS`)
    sauf besoin réel.
-4. Récupère ton **`MYBOX_ID`** : dans le panel, sur la page de ta MyBox, l'ID
-   apparaît dans l'URL (ex: `.../mybox/12345/...`).
-5. Récupère ton **`SERVER_ID`** : sur la page de ton serveur Minecraft dans
-   cette MyBox, l'ID apparaît dans l'URL (ex: `.../server/67890/...`).
+4. Récupère ton **`SERVER_ID`** : sur la page de ton serveur Minecraft dans le
+   panel, l'ID apparaît dans l'URL (ex: `.../server/67890/...`). Attention à
+   ne pas confondre avec l'ID de la MyBox (`.../mybox/12345/...`) qui apparaît
+   sur une autre page — c'est bien le second, spécifique au serveur, qu'il
+   faut utiliser.
 
 ## 2. Installer et tester le bot en local
 
@@ -83,7 +90,6 @@ Crée un fichier `.env` à la racine du projet avec au minimum :
 ```
 DISCORD_TOKEN=
 MINESTRATOR_API_KEY=
-MYBOX_ID=
 SERVER_ID=
 ANNOUNCE_CHANNEL_ID=
 ```
@@ -132,7 +138,6 @@ Render et Koyeb fonctionnent sur le même principe.
    mêmes que dans `.env`) :
    - `DISCORD_TOKEN`
    - `MINESTRATOR_API_KEY`
-   - `MYBOX_ID`
    - `SERVER_ID`
    - `ANNOUNCE_CHANNEL_ID` (et `STATS_CHANNEL_ID` si différent)
 6. Déploie. Railway relance automatiquement le bot s'il crashe et le fait

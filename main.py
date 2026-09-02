@@ -3,13 +3,19 @@ Bot Discord pour piloter à distance le serveur Minecraft Sengoku SMP,
 hébergé sur Minestrator (API officielle https://mine.sttr.io).
 
 Référence des endpoints utilisés : voir minestrator-api-fr.yaml (spec OpenAPI
-fournie par Minestrator), sections "MyBox" et "Server".
+fournie par Minestrator), section "Server".
+
+Note : PATCH /mybox/{id_mybox}/server/enable|disable existe dans l'API mais
+renvoie 403 API_MYBOX_FREE_FORBIDDEN sur les MyBox gratuites (ça réalloue les
+ressources partagées de la MyBox). On utilise donc PUT /server/{id_server}/
+poweraction pour tout — ça contrôle juste le process du serveur déjà alloué,
+et ça fonctionne sur l'offre gratuite.
 
 Commandes (start/restart/status ouvertes à tous les membres, stop réservé aux
 admins) :
-- /start   : réactive le serveur (PATCH /mybox/{id_mybox}/server/enable).
-- /restart : redémarre le serveur en cours (PUT .../poweraction restart10).
-- /stop    : désactive le serveur, réservé aux admins (PATCH .../server/disable).
+- /start   : démarre le serveur (PUT .../poweraction "start").
+- /restart : redémarre le serveur en cours (PUT .../poweraction "restart10").
+- /stop    : arrête le serveur, réservé aux admins (PUT .../poweraction "stop10").
 - /status  : affiche l'état + les joueurs connectés (GET /server/{id_server}/live).
 
 Tâches de fond :
@@ -42,7 +48,6 @@ load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 MINESTRATOR_API_KEY = os.getenv("MINESTRATOR_API_KEY")
-MYBOX_ID = os.getenv("MYBOX_ID")
 SERVER_ID = os.getenv("SERVER_ID")
 
 # URL de base officielle de l'API Minestrator (confirmée par minestrator-api-fr.yaml).
@@ -83,8 +88,6 @@ if not DISCORD_TOKEN:
     raise RuntimeError("La variable d'environnement DISCORD_TOKEN est manquante.")
 if not MINESTRATOR_API_KEY:
     raise RuntimeError("La variable d'environnement MINESTRATOR_API_KEY est manquante.")
-if not MYBOX_ID:
-    raise RuntimeError("La variable d'environnement MYBOX_ID est manquante.")
 if not SERVER_ID:
     raise RuntimeError("La variable d'environnement SERVER_ID est manquante.")
 
@@ -109,8 +112,13 @@ ERROR_MESSAGES = {
     "API_FORBIDDEN": "Accès refusé (permissions insuffisantes ou compte suspendu).",
     "API_RATE_LIMITED": "Trop de requêtes envoyées à l'API Minestrator, réessaie dans quelques instants.",
     "API_MISSING_REQUIRED_FIELDS": "Requête invalide : un champ requis est manquant ou incorrect.",
-    "API_EMPTY_RESOURCE": "Ressource introuvable (vérifie MYBOX_ID et SERVER_ID).",
+    "API_EMPTY_RESOURCE": "Ressource introuvable (vérifie SERVER_ID).",
     "API_GENERIC_ERROR": "Erreur interne de l'API Minestrator.",
+    "API_MYBOX_FREE_FORBIDDEN": (
+        "Action bloquée par Minestrator sur les MyBox gratuites. "
+        "Démarre/arrête le serveur depuis le panel, ou contacte le support Minestrator "
+        "pour confirmer si l'offre gratuite permet ça via l'API."
+    ),
 }
 
 
@@ -152,18 +160,6 @@ class MinestratorClient:
                     raise MinestratorAPIError(message)
 
                 return (payload or {}).get("api", {})
-
-    async def enable_server(self) -> None:
-        """PATCH /mybox/{id_mybox}/server/enable — réactive le serveur (démarrage)."""
-        await self._request(
-            "PATCH", f"/mybox/{MYBOX_ID}/server/enable", json_body={"id_server": int(SERVER_ID)}
-        )
-
-    async def disable_server(self) -> None:
-        """PATCH /mybox/{id_mybox}/server/disable — désactive le serveur (arrêt)."""
-        await self._request(
-            "PATCH", f"/mybox/{MYBOX_ID}/server/disable", json_body={"id_server": int(SERVER_ID)}
-        )
 
     async def power_action(self, action: str) -> None:
         """PUT /server/{id_server}/poweraction — start / restart / restart10 / stop / stop10 / kill."""
@@ -275,7 +271,7 @@ async def start(interaction: discord.Interaction):
             )
             return
 
-        await minestrator.enable_server()
+        await minestrator.power_action("start")
         await interaction.followup.send(
             "✅ Démarrage du serveur demandé avec succès ! Ça devrait être en ligne dans quelques instants."
         )
@@ -339,8 +335,10 @@ async def stop(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
 
     try:
-        await minestrator.disable_server()
-        await interaction.followup.send("🛑 Arrêt du serveur demandé avec succès.")
+        await minestrator.power_action("stop10")
+        await interaction.followup.send(
+            "🛑 Arrêt du serveur demandé (compte à rebours de 10s diffusé en jeu)."
+        )
     except MinestratorAPIError as e:
         await interaction.followup.send(f"⚠️ Impossible d'arrêter le serveur : {e}")
     except aiohttp.ClientError:
