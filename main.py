@@ -5,25 +5,28 @@ hébergé sur Minestrator (API officielle https://mine.sttr.io).
 Référence des endpoints utilisés : voir minestrator-api-fr.yaml (spec OpenAPI
 fournie par Minestrator), section "Server".
 
-Note : PATCH /mybox/{id_mybox}/server/enable|disable existe dans l'API mais
-renvoie 403 API_MYBOX_FREE_FORBIDDEN sur les MyBox gratuites (ça réalloue les
-ressources partagées de la MyBox). On utilise donc PUT /server/{id_server}/
-poweraction pour tout — ça contrôle juste le process du serveur déjà alloué,
-et ça fonctionne sur l'offre gratuite.
+IMPORTANT — offre gratuite : le support Minestrator a confirmé le 2026-09-03
+que piloter le démarrage du serveur via l'API sur une offre gratuite est
+interdit (PUT /poweraction renvoie 403 API_FORBIDDEN, et ajouter un en-tête
+Origin pour passer outre est considéré comme un contournement). Les commandes
+d'alimentation sont donc désactivées par défaut : voir POWER_ACTIONS_ENABLED,
+à ne réactiver qu'avec une offre payante. Le reste (statut, statistiques) est
+en lecture seule et n'est pas concerné.
 
 Commandes (start/restart/status ouvertes à tous les membres, stop réservé aux
 admins) :
-- /start   : démarre le serveur (PUT .../poweraction "start").
-- /restart : redémarre le serveur en cours (PUT .../poweraction "restart10").
-- /stop    : arrête le serveur, réservé aux admins (PUT .../poweraction "stop10").
+- /start   : démarre le serveur (PUT .../poweraction "start"). Désactivée.
+- /restart : redémarre le serveur en cours (PUT .../poweraction "restart10"). Désactivée.
+- /stop    : arrête le serveur, réservé aux admins (PUT .../poweraction "stop10"). Désactivée.
 - /status  : affiche l'état + les joueurs connectés (GET /server/{id_server}/live).
 
 Tâches de fond :
 - Redémarrage automatique périodique (toutes les RESTART_INTERVAL_HOURS heures,
   4h par défaut) : prévient dans le salon, indique les joueurs connectés, puis
-  redémarre le serveur même si des joueurs sont en ligne.
+  redémarre le serveur même si des joueurs sont en ligne. Désactivé tant que
+  POWER_ACTIONS_ENABLED est à false.
 - Veille de déconnexion : si le serveur passe hors ligne de façon inattendue,
-  un message est envoyé dans le salon pour inviter les joueurs à retaper /start.
+  un message est envoyé dans le salon pour prévenir les joueurs.
 - Panneau de statistiques en direct : un message (embed) mis à jour
   périodiquement dans un salon dédié, avec l'état, le CPU, la RAM, le disque,
   les joueurs connectés et l'uptime du serveur.
@@ -78,6 +81,24 @@ STATUS_POLL_INTERVAL_SECONDS = int(os.getenv("STATUS_POLL_INTERVAL_SECONDS", "12
 
 # Intervalle de rafraîchissement du panneau de statistiques (en secondes).
 STATS_UPDATE_INTERVAL_SECONDS = int(os.getenv("STATS_UPDATE_INTERVAL_SECONDS", "60"))
+
+# Actions d'alimentation (start / restart / stop) via l'API.
+#
+# Le support Minestrator a répondu le 2026-09-03 que sur les offres gratuites,
+# "tout contournement du démarrage manuel depuis le panel est strictement
+# interdit" : /poweraction n'est utilisable qu'avec une offre payante. Le
+# drapeau est donc à false par défaut — le bot reste alors en lecture seule
+# (/status et panneau de statistiques), ce qui n'est pas concerné.
+#
+# À repasser à true uniquement après être passé sur une offre payante.
+POWER_ACTIONS_ENABLED = os.getenv("POWER_ACTIONS_ENABLED", "false").lower() in ("1", "true", "yes")
+
+# Message affiché quand une commande d'alimentation est désactivée.
+POWER_ACTIONS_DISABLED_MESSAGE = (
+    "🔒 Cette commande est désactivée : l'offre gratuite Minestrator ne permet "
+    "pas de piloter le serveur via l'API. Le démarrage doit se faire depuis le "
+    "panel Minestrator."
+)
 
 # Rôle Discord autorisé à arrêter le serveur (/stop). Vide = utilisateurs avec
 # la permission Discord "Gérer le serveur" uniquement. /start, /restart et
@@ -137,16 +158,10 @@ class MinestratorClient:
         return {
             "Authorization": f"Bearer {self._api_key}",
             "Accept": "application/json",
-            # L'API Minestrator refuse les requêtes qui modifient l'état (PUT
-            # /poweraction, etc.) avec un 403 API_FORBIDDEN quand l'en-tête
-            # Origin/Referer ne pointe pas vers minestrator.com — alors que la
-            # lecture (GET /live) passe sans. C'est une protection anti-CSRF
-            # appliquée à tort aux appels authentifiés par clé API : Origin est
-            # un mécanisme navigateur, sans objet pour une auth par token Bearer.
-            # Testé le 2026-09-02 : sans cet en-tête → 403, avec → 200.
-            # À retirer si Minestrator corrige ce comportement côté serveur
-            # (le garder resterait inoffensif, l'en-tête serait simplement ignoré).
-            "Origin": "https://minestrator.com",
+            # Aucun en-tête Origin/Referer : le support Minestrator a confirmé
+            # le 2026-09-03 que l'ajouter pour passer le 403 API_FORBIDDEN sur
+            # /poweraction constitue un contournement interdit sur l'offre
+            # gratuite. Voir POWER_ACTIONS_ENABLED plus haut.
         }
 
     async def _request(self, method: str, path: str, json_body: dict | None = None) -> dict:
@@ -258,8 +273,14 @@ async def on_ready():
         logger.exception("Échec de la synchronisation des commandes slash.")
 
     if ANNOUNCE_CHANNEL_ID:
-        if not auto_restart_loop.is_running():
-            auto_restart_loop.start()
+        if POWER_ACTIONS_ENABLED:
+            if not auto_restart_loop.is_running():
+                auto_restart_loop.start()
+        else:
+            logger.warning(
+                "POWER_ACTIONS_ENABLED=false : redémarrage automatique désactivé "
+                "(offre gratuite Minestrator, actions d'alimentation interdites via l'API)."
+            )
         if not watch_offline_loop.is_running():
             watch_offline_loop.start()
     else:
@@ -280,9 +301,19 @@ async def on_ready():
 # ---------------------------------------------------------------------------
 
 
+async def refuse_if_power_actions_disabled(interaction: discord.Interaction) -> bool:
+    """Répond et renvoie True si les actions d'alimentation sont interdites."""
+    if POWER_ACTIONS_ENABLED:
+        return False
+    await interaction.response.send_message(POWER_ACTIONS_DISABLED_MESSAGE, ephemeral=True)
+    return True
+
+
 @bot.tree.command(name="start", description="Démarre le serveur Minecraft Sengoku SMP")
 async def start(interaction: discord.Interaction):
     # Ouvert à tous les membres, sans restriction de rôle.
+    if await refuse_if_power_actions_disabled(interaction):
+        return
     await interaction.response.defer(thinking=True)
 
     try:
@@ -311,6 +342,8 @@ async def start(interaction: discord.Interaction):
 @bot.tree.command(name="restart", description="Redémarre le serveur Minecraft Sengoku SMP")
 async def restart(interaction: discord.Interaction):
     # Ouvert à tous les membres, sans restriction de rôle.
+    if await refuse_if_power_actions_disabled(interaction):
+        return
     await interaction.response.defer(thinking=True)
 
     try:
@@ -329,7 +362,7 @@ async def restart(interaction: discord.Interaction):
 
     state = live.get("state", "offline")
     if state == "offline":
-        await interaction.followup.send("ℹ️ Le serveur est hors ligne. Utilise plutôt `/start` pour le démarrer.")
+        await interaction.followup.send("ℹ️ Le serveur est hors ligne. Démarre-le depuis le panel Minestrator.")
         return
     if state in ("starting", "stopping"):
         await interaction.followup.send(
@@ -349,6 +382,8 @@ async def restart(interaction: discord.Interaction):
 
 @bot.tree.command(name="stop", description="Arrête le serveur Minecraft Sengoku SMP (admins uniquement)")
 async def stop(interaction: discord.Interaction):
+    if await refuse_if_power_actions_disabled(interaction):
+        return
     if not has_admin_permission(interaction):
         await interaction.response.send_message(
             "Tu n'as pas la permission d'utiliser cette commande.", ephemeral=True
@@ -456,7 +491,7 @@ async def execute_restart_sequence(send, stats: dict, *, wait_seconds: int, intr
     else:
         await send(
             "🔴 Le serveur ne semble pas être remonté automatiquement après le redémarrage. "
-            "Retape `/start` pour le relancer !"
+            "Relance-le depuis le panel Minestrator."
         )
 
 
@@ -508,7 +543,7 @@ async def watch_offline_loop():
 
     if last_known_state in ("online", "starting") and state == "offline":
         await channel.send(
-            "🔴 Le serveur Sengoku SMP est hors ligne. Retapez `/start` pour le relancer !"
+            "🔴 Le serveur Sengoku SMP est hors ligne. Un administrateur doit le relancer depuis le panel Minestrator."
         )
 
     last_known_state = state

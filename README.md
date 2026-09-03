@@ -1,32 +1,50 @@
 # Sengoku SMP — Bot Discord de contrôle serveur (Minestrator)
 
-Bot Discord permettant à tes joueurs de démarrer le serveur Minecraft Sengoku SMP
-(hébergé sur Minestrator) via une simple commande `/start`, sans leur donner accès
-au panel d'administration.
+Bot Discord affichant l'état du serveur Minecraft Sengoku SMP (hébergé sur
+Minestrator) dans Discord, et — **sur une offre payante uniquement** — permettant
+à tes joueurs de le démarrer sans accès au panel d'administration.
+
+## ⚠️ Offre gratuite : commandes d'alimentation désactivées
+
+Le support Minestrator a confirmé le **3 septembre 2026** que sur les offres
+gratuites, **tout contournement du démarrage manuel depuis le panel est
+strictement interdit**. Concrètement :
+
+- `PUT /server/{id_server}/poweraction` répond `403 API_FORBIDDEN` sans en-tête
+  `Origin` pointant vers `minestrator.com` ;
+- ajouter cet en-tête pour passer outre est considéré par Minestrator comme un
+  **contournement volontaire**, passible de suspension du compte.
+
+Le bot n'envoie donc plus cet en-tête, et les commandes `/start`, `/restart` et
+`/stop` ainsi que le redémarrage automatique sont **désactivés par défaut**
+(`POWER_ACTIONS_ENABLED=false`). Le serveur doit être démarré depuis le panel
+Minestrator.
+
+Les fonctions de lecture (`/status`, panneau de statistiques) ne sont pas
+concernées et continuent de fonctionner.
+
+Si tu passes sur une offre payante — Minestrator indique que **toutes** leurs
+offres payantes autorisent cet usage de l'API — mets `POWER_ACTIONS_ENABLED=true`
+dans ton `.env` pour réactiver l'ensemble.
 
 ## Commandes
 
-- `/start` — démarre le serveur (`PUT /server/{id_server}/poweraction` avec `"start"`). **Ouvert à tous les membres.**
-- `/restart` — redémarre le serveur en cours (`PUT .../poweraction` avec `"restart10"`). **Ouvert à tous les membres.**
-- `/stop` — arrête le serveur (`PUT .../poweraction` avec `"stop10"`). **Réservé aux admins.**
 - `/status` — affiche l'état actuel du serveur et les joueurs connectés (`GET /server/{id_server}/live`). Ouvert à tous.
+- `/start` — démarre le serveur (`PUT /server/{id_server}/poweraction` avec `"start"`). Ouvert à tous les membres. **Désactivé sur offre gratuite.**
+- `/restart` — redémarre le serveur en cours (`PUT .../poweraction` avec `"restart10"`). Ouvert à tous les membres. **Désactivé sur offre gratuite.**
+- `/stop` — arrête le serveur (`PUT .../poweraction` avec `"stop10"`). Réservé aux admins. **Désactivé sur offre gratuite.**
 
-> Note technique : l'API expose aussi `PATCH /mybox/{id_mybox}/server/enable|disable`,
-> mais cet endpoint renvoie `403 API_MYBOX_FREE_FORBIDDEN` sur les MyBox
-> gratuites (il réalloue les ressources partagées entre plusieurs serveurs).
-> Le bot utilise donc uniquement `poweraction`, qui contrôle le process d'un
-> serveur déjà alloué et fonctionne sur l'offre gratuite.
-
-`/start` et `/restart` sont volontairement accessibles à n'importe quel membre
-du serveur Discord, sans rôle particulier — c'est tout l'intérêt du bot :
-permettre à tes joueurs d'allumer/redémarrer le serveur sans accès au panel.
-Seul `/stop` est restreint (voir "Permissions Discord nécessaires" plus bas).
+Quand elles sont actives, `/start` et `/restart` sont volontairement accessibles
+à n'importe quel membre du serveur Discord, sans rôle particulier — c'est tout
+l'intérêt du bot : permettre à tes joueurs d'allumer/redémarrer le serveur sans
+accès au panel. Seul `/stop` est restreint (voir "Permissions Discord
+nécessaires" plus bas).
 
 Le bot fait aussi tourner trois tâches de fond (voir sections "Redémarrage
 automatique" et "Panneau de statistiques" plus bas) : un redémarrage
-périodique toutes les 4h, une alerte dans le salon Discord si le serveur tombe
-hors ligne de façon inattendue, et un panneau de statistiques mis à jour en
-direct.
+périodique toutes les 4h (désactivé avec les commandes d'alimentation), une
+alerte dans le salon Discord si le serveur tombe hors ligne de façon
+inattendue, et un panneau de statistiques mis à jour en direct.
 
 La documentation officielle de l'API (spec OpenAPI) est incluse dans ce dépôt :
 [`minestrator-api-fr.yaml`](./minestrator-api-fr.yaml). C'est la source de
@@ -41,12 +59,12 @@ dessus (endpoints, headers, schémas de réponse/erreur).
    encodée** : colle-la telle quelle dans `.env`, ne la ré-encode pas. Garde-la
    secrète, elle donne un accès équivalent à ton mot de passe pour les actions
    autorisées.
-3. **Important (offre gratuite)** : l'API Minestrator précise qu'elle est
-   "accessible à tous les clients Minestrator.com", donc a priori disponible
-   même sur l'offre gratuite. Un usage abusif (polling trop fréquent, etc.)
-   peut cependant faire désactiver l'accès API — reste dans les intervalles
-   par défaut du bot (`RESTART_INTERVAL_HOURS`, `STATUS_POLL_INTERVAL_SECONDS`)
-   sauf besoin réel.
+3. **Important (offre gratuite)** : l'API est accessible en lecture, mais les
+   actions d'alimentation (`poweraction`) sont réservées aux offres payantes —
+   voir l'encadré en haut de ce README. Un usage abusif (polling trop fréquent,
+   etc.) peut par ailleurs faire désactiver l'accès API : reste dans les
+   intervalles par défaut du bot (`STATUS_POLL_INTERVAL_SECONDS`,
+   `STATS_UPDATE_INTERVAL_SECONDS`) sauf besoin réel.
 4. Récupère ton **`SERVER_ID`** : sur la page de ton serveur Minecraft dans le
    panel, l'ID apparaît dans l'URL (ex: `.../server/67890/...`). Attention à
    ne pas confondre avec l'ID de la MyBox (`.../mybox/12345/...`) qui apparaît
@@ -94,10 +112,10 @@ SERVER_ID=
 ANNOUNCE_CHANNEL_ID=
 ```
 
-Toutes les autres variables (`STATS_CHANNEL_ID`, `RESTART_INTERVAL_HOURS`,
-`RESTART_WARNING_SECONDS`, `STATUS_POLL_INTERVAL_SECONDS`,
-`STATS_UPDATE_INTERVAL_SECONDS`, `ADMIN_ROLE_NAME`, `MINESTRATOR_API_BASE_URL`)
-sont optionnelles — voir leur description dans `main.py` (section
+Toutes les autres variables (`POWER_ACTIONS_ENABLED`, `STATS_CHANNEL_ID`,
+`RESTART_INTERVAL_HOURS`, `RESTART_WARNING_SECONDS`,
+`STATUS_POLL_INTERVAL_SECONDS`, `STATS_UPDATE_INTERVAL_SECONDS`,
+`ADMIN_ROLE_NAME`, `MINESTRATOR_API_BASE_URL`) sont optionnelles — voir leur description dans `main.py` (section
 Configuration) si tu veux les personnaliser.
 
 Ce fichier `.env` est ignoré par Git (voir `.gitignore`) — il ne sera jamais
@@ -151,6 +169,9 @@ Render et Koyeb fonctionnent sur le même principe.
   configuration de variables d'environnement.
 
 ## 4. Redémarrage automatique périodique
+
+> Désactivé tant que `POWER_ACTIONS_ENABLED` vaut `false` (cas de l'offre
+> gratuite, voir l'encadré en haut de ce README).
 
 Le serveur redémarre automatiquement toutes les `RESTART_INTERVAL_HOURS`
 heures (4h par défaut), même si des joueurs sont connectés :
